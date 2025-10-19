@@ -164,7 +164,8 @@ app.post('/twilio-process', async (req, res, next) => {
             const menuItems = (await db.obtenerMenu()).map(p => p.nombre);
 
             // 1. Procesar la voz con la IA real (AsistenteIA.js)
-            const iaResultado = await asistenteIA.procesarVoz(transcripcion, menuItems);
+            // 🔴 CORRECCIÓN: Se cambió 'procesarVoz' a 'procesarOrden'
+            const iaResultado = await asistenteIA.procesarOrden(transcripcion, menuItems);
 
             if (iaResultado.items.length > 0) {
                 // 2. Almacenar la orden en la BD real
@@ -186,6 +187,7 @@ app.post('/twilio-process', async (req, res, next) => {
         res.type('text/xml');
         res.send(twiml.toString());
     } catch (error) {
+        // Usa el manejador de errores global
         next(error);
     }
 });
@@ -264,8 +266,8 @@ app.get('/admin', async (req, res) => {
                         'completada': 'Completada'
                     };
                     
-                    const confirmed = confirm(\`¿Estás seguro de cambiar la orden #\${orderId} a "\${statusMap[newStatus]}"?\`);
-                    if (!confirmed) return;
+                    // Reemplazo de alert/confirm
+                    if (!window.confirm(\`¿Estás seguro de cambiar la orden #\${orderId} a "\${statusMap[newStatus]}"?\`)) return;
 
                     try {
                         const response = await fetch(\`\${API_BASE_URL}/ordenes/\${orderId}/estado\`, {
@@ -283,11 +285,13 @@ app.get('/admin', async (req, res) => {
                             fetchOrders(); // Refrescar la lista después de la actualización
                         } else {
                             console.error('Error al actualizar:', result.error);
-                            alert('Error al actualizar el estado: ' + (result.error || 'Fallo de autenticación.'));
+                            // Reemplazo de alert/confirm
+                            window.alert('Error al actualizar el estado: ' + (result.error || 'Fallo de autenticación.'));
                         }
                     } catch (error) {
                         console.error('Fallo en la conexión:', error);
-                        alert('Error de red al actualizar el estado.');
+                        // Reemplazo de alert/confirm
+                        window.alert('Error de red al actualizar el estado.');
                     }
                 }
 
@@ -309,36 +313,36 @@ app.get('/admin', async (req, res) => {
                         const date = new Date(order.fecha).toLocaleTimeString('es-MX', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
                         const card = document.createElement('div');
                         card.className = 'bg-white p-6 rounded-xl shadow-lg border-t-4 border-indigo-400 hover:shadow-xl transition duration-300';
-                        card.innerHTML = \`
+                        card.innerHTML = `
                             <div class="flex justify-between items-start mb-3">
-                                <h3 class="text-2xl font-bold text-gray-900">#\${order.id}</h3>
-                                <span class="px-3 py-1 text-xs font-semibold rounded-full \${getStatusColor(order.estado)}">
-                                    \${order.estado.toUpperCase().replace('_', ' ')}
+                                <h3 class="text-2xl font-bold text-gray-900">#${order.id}</h3>
+                                <span class="px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.estado)}">
+                                    ${order.estado.toUpperCase().replace('_', ' ')}
                                 </span>
                             </div>
-                            <p class="text-sm text-gray-500 mb-2">Hora: \${date} | Teléfono: \${order.telefono}</p>
-                            <p class="mb-4 text-gray-700 italic border-l-4 pl-3 border-gray-200">"\${order.transcripcion}"</p>
+                            <p class="text-sm text-gray-500 mb-2">Hora: ${date} | Teléfono: ${order.telefono}</p>
+                            <p class="mb-4 text-gray-700 italic border-l-4 pl-3 border-gray-200">"${order.transcripcion}"</p>
                             <div class="space-y-2 pt-4 border-t border-gray-100">
                                 <p class="font-semibold text-gray-800">Cambiar Estado:</p>
                                 
-                                <button onclick="updateStatus(\${order.id}, 'en_preparacion')" 
-                                    class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md \${order.estado !== 'recibida' ? 'opacity-50 cursor-not-allowed' : ''}" 
-                                    \${order.estado !== 'recibida' ? 'disabled' : ''}>
+                                <button onclick="updateStatus(${order.id}, 'en_preparacion')" 
+                                    class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ${order.estado !== 'recibida' ? 'opacity-50 cursor-not-allowed' : ''}" 
+                                    ${order.estado !== 'recibida' ? 'disabled' : ''}>
                                     A Preparación
                                 </button>
                                 
-                                <button onclick="updateStatus(\${order.id}, 'lista_para_servir')" 
-                                    class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md \${order.estado !== 'en_preparacion' ? 'opacity-50 cursor-not-allowed' : ''}" 
-                                    \${order.estado !== 'en_preparacion' ? 'disabled' : ''}>
+                                <button onclick="updateStatus(${order.id}, 'lista_para_servir')" 
+                                    class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ${order.estado !== 'en_preparacion' ? 'opacity-50 cursor-not-allowed' : ''}" 
+                                    ${order.estado !== 'en_preparacion' ? 'disabled' : ''}>
                                     Lista para Servir
                                 </button>
                                 
-                                <button onclick="updateStatus(\${order.id}, 'completada')" 
+                                <button onclick="updateStatus(${order.id}, 'completada')" 
                                     class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md">
                                     Completada
                                 </button>
                             </div>
-                        \`;
+                        `;
                         list.appendChild(card);
                     });
                 }
@@ -347,7 +351,7 @@ app.get('/admin', async (req, res) => {
                     document.getElementById('loader').classList.remove('hidden');
                     try {
                         // SUGERENCIA 1: Consulta las órdenes activas de la BD real
-                        const response = await fetch(\`\${API_BASE_URL}/ordenes-activas\`);
+                        const response = await fetch(`${API_BASE_URL}/ordenes-activas`);
                         const orders = await response.json();
                         renderOrders(orders);
                     } catch (error) {
