@@ -16,7 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Variables de entorno requeridas
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY; // Clave de seguridad para admin (SUGERENCIA 4)
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY; // Clave de seguridad para admin
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
@@ -35,7 +35,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// SUGERENCIA 4: Middleware de Autenticación para proteger rutas sensibles
+// Middleware de Autenticación para proteger rutas sensibles
 function protegerRuta(req, res, next) {
     const apiKey = req.headers['x-api-key'];
     if (apiKey && apiKey === ADMIN_API_KEY) {
@@ -45,22 +45,14 @@ function protegerRuta(req, res, next) {
     res.status(401).json({ error: 'No autorizado. Se requiere un encabezado X-API-Key válido.' });
 }
 
-// Lógica de notificación (Simulada, pero usaría Twilio para SMS/WhatsApp o WebSockets en producción)
+// Lógica de notificación (Simulada, pero usaría Twilio para SMS/WhatsApp)
 async function enviarNotificacion(area, orden) {
     console.log(`[NOTIFICACIÓN ${area.toUpperCase()}] Nueva orden #${orden.id} recibida.`);
     console.log(`Detalles: ${orden.items.map(i => i.nombre).join(', ')}`);
     // Aquí iría el código real para enviar un SMS a la Cocina/Barra vía Twilio
-    /*
-    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-    client.messages.create({
-        body: `Nueva orden #${orden.id} para ${area}: ${orden.items.map(i => i.nombre).join(', ')}`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: '+15551234567' // Número de destino real
-    });
-    */
 }
 
-// SUGERENCIA 3: Procesa la orden y llama a notificar usando el campo 'area_preparacion'
+// Procesa la orden y llama a notificar usando el campo 'area_preparacion'
 function procesarNotificaciones(orden) {
     const itemsPorArea = orden.items.reduce((acc, item) => {
         // Agrupa los items por su área de preparación definida en la BD
@@ -120,7 +112,7 @@ app.get('/', async (req, res, next) => {
     }
 });
 
-// SUGERENCIA 1: Ruta para obtener órdenes activas (consulta la BD real)
+// Ruta para obtener órdenes activas (consulta la BD real)
 app.get('/ordenes-activas', async (req, res, next) => {
     try {
         const ordenesActivas = await db.obtenerOrdenesActivas();
@@ -163,8 +155,8 @@ app.post('/twilio-process', async (req, res, next) => {
             // Obtener el menú real de la BD para dar contexto a la IA
             const menuItems = (await db.obtenerMenu()).map(p => p.nombre);
 
+            // CORRECCIÓN LÓGICA: Usar procesarOrden, no procesarVoz
             // 1. Procesar la voz con la IA real (AsistenteIA.js)
-            // 🔴 CORRECCIÓN: Se cambió 'procesarVoz' a 'procesarOrden'
             const iaResultado = await asistenteIA.procesarOrden(transcripcion, menuItems);
 
             if (iaResultado.items.length > 0) {
@@ -187,14 +179,13 @@ app.post('/twilio-process', async (req, res, next) => {
         res.type('text/xml');
         res.send(twiml.toString());
     } catch (error) {
-        // Usa el manejador de errores global
         next(error);
     }
 });
 
 // --- 4. RUTAS DEL PANEL DE ADMINISTRACIÓN (PROTEGIDAS) ---
 
-// Ruta protegida para actualizar el estado de una orden (SUGERENCIA 4)
+// Ruta protegida para actualizar el estado de una orden
 app.put('/ordenes/:id/estado', protegerRuta, async (req, res, next) => {
     const { id } = req.params;
     const { estado } = req.body;
@@ -206,7 +197,7 @@ app.put('/ordenes/:id/estado', protegerRuta, async (req, res, next) => {
     }
 });
 
-// Ruta protegida para reiniciar la DB de órdenes (SUGERENCIA 4)
+// Ruta protegida para reiniciar la DB de órdenes
 app.post('/reiniciar', protegerRuta, async (req, res, next) => {
     try {
         const result = await db.reiniciarOrdenes();
@@ -258,6 +249,20 @@ app.get('/admin', async (req, res) => {
                 const ADMIN_API_KEY = document.getElementById('admin-key').textContent.trim();
                 const API_BASE_URL = window.location.origin;
 
+                function showCustomAlert(message) {
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+                    alertDiv.innerHTML = \`
+                        <div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">
+                            <h3 class="text-xl font-bold mb-3 text-red-600">Alerta</h3>
+                            <p class="text-gray-700 mb-4">\${message}</p>
+                            <button id="close-alert" class="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-2 rounded-lg transition duration-150">Cerrar</button>
+                        </div>
+                    \`;
+                    document.body.appendChild(alertDiv);
+                    document.getElementById('close-alert').onclick = () => document.body.removeChild(alertDiv);
+                }
+
                 async function updateStatus(orderId, newStatus) {
                     const statusMap = {
                         'recibida': 'A Preparación',
@@ -266,8 +271,7 @@ app.get('/admin', async (req, res) => {
                         'completada': 'Completada'
                     };
                     
-                    // Reemplazo de alert/confirm
-                    if (!window.confirm(\`¿Estás seguro de cambiar la orden #\${orderId} a "\${statusMap[newStatus]}"?\`)) return;
+                    if (!confirm(\`¿Estás seguro de cambiar la orden #\${orderId} a "\${statusMap[newStatus]}"?\`)) return;
 
                     try {
                         const response = await fetch(\`\${API_BASE_URL}/ordenes/\${orderId}/estado\`, {
@@ -285,13 +289,11 @@ app.get('/admin', async (req, res) => {
                             fetchOrders(); // Refrescar la lista después de la actualización
                         } else {
                             console.error('Error al actualizar:', result.error);
-                            // Reemplazo de alert/confirm
-                            window.alert('Error al actualizar el estado: ' + (result.error || 'Fallo de autenticación.'));
+                            showCustomAlert('Error al actualizar el estado: ' + (result.error || 'Fallo de autenticación.'));
                         }
                     } catch (error) {
                         console.error('Fallo en la conexión:', error);
-                        // Reemplazo de alert/confirm
-                        window.alert('Error de red al actualizar el estado.');
+                        showCustomAlert('Error de red al actualizar el estado.');
                     }
                 }
 
@@ -313,6 +315,8 @@ app.get('/admin', async (req, res) => {
                         const date = new Date(order.fecha).toLocaleTimeString('es-MX', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
                         const card = document.createElement('div');
                         card.className = 'bg-white p-6 rounded-xl shadow-lg border-t-4 border-indigo-400 hover:shadow-xl transition duration-300';
+                        
+                        // CORRECCIÓN SINTAXIS: Usando backticks (`) para la cadena HTML para evitar SyntaxError
                         card.innerHTML = `
                             <div class="flex justify-between items-start mb-3">
                                 <h3 class="text-2xl font-bold text-gray-900">#${order.id}</h3>
@@ -350,7 +354,6 @@ app.get('/admin', async (req, res) => {
                 async function fetchOrders() {
                     document.getElementById('loader').classList.remove('hidden');
                     try {
-                        // SUGERENCIA 1: Consulta las órdenes activas de la BD real
                         const response = await fetch(`${API_BASE_URL}/ordenes-activas`);
                         const orders = await response.json();
                         renderOrders(orders);
@@ -396,7 +399,14 @@ app.use((error, req, res, next) => {
 });
 
 // Inicialización del Servidor
-app.listen(PORT, () => {
-    console.log(`Servidor Express escuchando en el puerto ${PORT}`);
-    console.log(`URL Local: http://localhost:${PORT}`);
+// Nota: La verificación de tablas debe ejecutarse una vez antes de escuchar
+db.verificarTablas().then(() => {
+    console.log("Tablas verificadas exitosamente.");
+    app.listen(PORT, () => {
+        console.log(`Servidor Express escuchando en el puerto ${PORT}`);
+        console.log(`URL Local: http://localhost:${PORT}`);
+    });
+}).catch(error => {
+    console.error("Error fatal al inicializar la base de datos:", error);
+    process.exit(1);
 });
