@@ -47,14 +47,19 @@ function protegerRuta(req, res, next) {
 
 // Lógica de notificación (Simulada, pero usaría Twilio para SMS/WhatsApp)
 async function enviarNotificacion(area, orden) {
+    // CORRECCIÓN DE SEGURIDAD: Asegurar que items sea un array antes de usar .map
+    const items = orden.items || []; 
     console.log(`[NOTIFICACIÓN ${area.toUpperCase()}] Nueva orden #${orden.id} recibida.`);
-    console.log(`Detalles: ${orden.items.map(i => i.nombre).join(', ')}`);
+    console.log(`Detalles: ${items.map(i => i.nombre).join(', ')}`);
     // Aquí iría el código real para enviar un SMS a la Cocina/Barra vía Twilio
 }
 
 // Procesa la orden y llama a notificar usando el campo 'area_preparacion'
 function procesarNotificaciones(orden) {
-    const itemsPorArea = orden.items.reduce((acc, item) => {
+    // CORRECCIÓN DE ERROR: Asegurar que orden.items es un array (o vacío) antes de llamar a reduce.
+    const itemsSeguros = orden.items || []; 
+    
+    const itemsPorArea = itemsSeguros.reduce((acc, item) => { // Línea 162
         // Agrupa los items por su área de preparación definida en la BD
         const area = item.area_preparacion || 'general';
         acc[area] = acc[area] || [];
@@ -155,11 +160,10 @@ app.post('/twilio-process', async (req, res, next) => {
             // Obtener el menú real de la BD para dar contexto a la IA
             const menuItems = (await db.obtenerMenu()).map(p => p.nombre);
 
-            // CORRECCIÓN LÓGICA: Usar procesarOrden, no procesarVoz
             // 1. Procesar la voz con la IA real (AsistenteIA.js)
             const iaResultado = await asistenteIA.procesarOrden(transcripcion, menuItems);
 
-            if (iaResultado.items.length > 0) {
+            if (iaResultado.items && iaResultado.items.length > 0) {
                 // 2. Almacenar la orden en la BD real
                 const nuevaOrden = await db.agregarOrden(iaResultado.items, Caller, transcripcion);
                 
@@ -169,7 +173,7 @@ app.post('/twilio-process', async (req, res, next) => {
                 // 4. Responder al cliente
                 twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `${iaResultado.mensajeRespuesta} Su orden ha sido registrada con el número ${nuevaOrden.id}. Gracias.`);
             } else {
-                 // Si la IA no identificó items
+                 // Si la IA no identificó items o iaResultado.items es nulo
                  twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `${iaResultado.mensajeRespuesta}`);
             }
         } else {
