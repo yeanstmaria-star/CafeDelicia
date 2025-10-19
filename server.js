@@ -361,7 +361,8 @@ app.get('/admin', async (req, res) => {
                 async function fetchOrders() {
                     document.getElementById('loader').classList.remove('hidden');
                     try {
-                        const response = await fetch(`${API_BASE_URL}/ordenes-activas`);
+                        // CORRECCIÓN DE SINTAXIS: Usando concatenación de cadenas en lugar de template literal anidado
+                        const response = await fetch(API_BASE_URL + '/ordenes-activas');
                         const orders = await response.json();
                         renderOrders(orders);
                     } catch (error) {
