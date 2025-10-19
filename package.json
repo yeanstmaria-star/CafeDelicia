@@ -1,0 +1,31 @@
+{
+  "name": "sistema-ordenes-ia",
+  "version": "1.0.0",
+  "description": "Backend para procesamiento de órdenes de voz con Twilio y Gemini.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "express",
+    "twilio",
+    "gemini",
+    "ia",
+    "postgres"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "twilio": "^5.2.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
