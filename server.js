@@ -252,13 +252,14 @@ app.get('/admin', async (req, res) => {
                 function showCustomAlert(message) {
                     const alertDiv = document.createElement('div');
                     alertDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-                    alertDiv.innerHTML = \`
-                        <div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">
-                            <h3 class="text-xl font-bold mb-3 text-red-600">Alerta</h3>
-                            <p class="text-gray-700 mb-4">\${message}</p>
-                            <button id="close-alert" class="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-2 rounded-lg transition duration-150">Cerrar</button>
-                        </div>
-                    \`;
+                    
+                    // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
+                    alertDiv.innerHTML = '<div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">' +
+                                         '<h3 class="text-xl font-bold mb-3 text-red-600">Alerta</h3>' +
+                                         '<p class="text-gray-700 mb-4">' + message + '</p>' +
+                                         '<button id="close-alert" class="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-2 rounded-lg transition duration-150">Cerrar</button>' +
+                                         '</div>';
+
                     document.body.appendChild(alertDiv);
                     document.getElementById('close-alert').onclick = () => document.body.removeChild(alertDiv);
                 }
@@ -271,10 +272,12 @@ app.get('/admin', async (req, res) => {
                         'completada': 'Completada'
                     };
                     
-                    if (!confirm(\`¿Estás seguro de cambiar la orden #\${orderId} a "\${statusMap[newStatus]}"?\`)) return;
+                    // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
+                    if (!confirm('¿Estás seguro de cambiar la orden #' + orderId + ' a "' + statusMap[newStatus] + '"?')) return;
 
                     try {
-                        const response = await fetch(\`\${API_BASE_URL}/ordenes/\${orderId}/estado\`, {
+                        // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
+                        const response = await fetch(API_BASE_URL + '/ordenes/' + orderId + '/estado', {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -316,37 +319,41 @@ app.get('/admin', async (req, res) => {
                         const card = document.createElement('div');
                         card.className = 'bg-white p-6 rounded-xl shadow-lg border-t-4 border-indigo-400 hover:shadow-xl transition duration-300';
                         
-                        // CORRECCIÓN SINTAXIS: Usando backticks (`) para la cadena HTML para evitar SyntaxError
-                        card.innerHTML = `
-                            <div class="flex justify-between items-start mb-3">
-                                <h3 class="text-2xl font-bold text-gray-900">#${order.id}</h3>
-                                <span class="px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.estado)}">
-                                    ${order.estado.toUpperCase().replace('_', ' ')}
-                                </span>
-                            </div>
-                            <p class="text-sm text-gray-500 mb-2">Hora: ${date} | Teléfono: ${order.telefono}</p>
-                            <p class="mb-4 text-gray-700 italic border-l-4 pl-3 border-gray-200">"${order.transcripcion}"</p>
-                            <div class="space-y-2 pt-4 border-t border-gray-100">
-                                <p class="font-semibold text-gray-800">Cambiar Estado:</p>
-                                
-                                <button onclick="updateStatus(${order.id}, 'en_preparacion')" 
-                                    class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ${order.estado !== 'recibida' ? 'opacity-50 cursor-not-allowed' : ''}" 
-                                    ${order.estado !== 'recibida' ? 'disabled' : ''}>
-                                    A Preparación
-                                </button>
-                                
-                                <button onclick="updateStatus(${order.id}, 'lista_para_servir')" 
-                                    class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ${order.estado !== 'en_preparacion' ? 'opacity-50 cursor-not-allowed' : ''}" 
-                                    ${order.estado !== 'en_preparacion' ? 'disabled' : ''}>
-                                    Lista para Servir
-                                </button>
-                                
-                                <button onclick="updateStatus(${order.id}, 'completada')" 
-                                    class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md">
-                                    Completada
-                                </button>
-                            </div>
-                        `;
+                        // CORRECCIÓN: Usando concatenación estándar para el HTML para evitar SyntaxError
+                        const statusClass = getStatusColor(order.estado);
+                        const isRecibida = order.estado === 'recibida';
+                        const isEnPreparacion = order.estado === 'en_preparacion';
+                        const isCompletada = order.estado === 'completada';
+
+                        card.innerHTML = '<div class="flex justify-between items-start mb-3">' +
+                                         '<h3 class="text-2xl font-bold text-gray-900">#' + order.id + '</h3>' +
+                                         '<span class="px-3 py-1 text-xs font-semibold rounded-full ' + statusClass + '">' +
+                                         order.estado.toUpperCase().replace('_', ' ') +
+                                         '</span>' +
+                                         '</div>' +
+                                         '<p class="text-sm text-gray-500 mb-2">Hora: ' + date + ' | Teléfono: ' + order.telefono + '</p>' +
+                                         '<p class="mb-4 text-gray-700 italic border-l-4 pl-3 border-gray-200">"' + order.transcripcion + '"</p>' +
+                                         '<div class="space-y-2 pt-4 border-t border-gray-100">' +
+                                         '<p class="font-semibold text-gray-800">Cambiar Estado:</p>' +
+                                         
+                                         '<button onclick="updateStatus(' + order.id + ', \'en_preparacion\')" ' +
+                                         'class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ' + (isRecibida ? '' : 'opacity-50 cursor-not-allowed') + '" ' +
+                                         (isRecibida ? '' : 'disabled') + '>' +
+                                         'A Preparación' +
+                                         '</button>' +
+                                         
+                                         '<button onclick="updateStatus(' + order.id + ', \'lista_para_servir\')" ' +
+                                         'class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ' + (isEnPreparacion ? '' : 'opacity-50 cursor-not-allowed') + '" ' +
+                                         (isEnPreparacion ? '' : 'disabled') + '>' +
+                                         'Lista para Servir' +
+                                         '</button>' +
+                                         
+                                         '<button onclick="updateStatus(' + order.id + ', \'completada\')" ' +
+                                         'class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md">' +
+                                         'Completada' +
+                                         '</button>' +
+                                         '</div>';
+
                         list.appendChild(card);
                     });
                 }
