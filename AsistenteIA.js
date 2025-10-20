@@ -3,7 +3,7 @@
 // La IA real controla la transición de estados y la extracción de ítems de la orden.
 
 const axios = require('axios'); // Ya incluido en package.json
-const { getFirestore } = require('firebase/firestore'); // Usado para simular acceso al menú
+// Eliminada la línea de require de firebase/firestore que causaba el error de dependencia.
 
 // Configuración de la API (tomada de .env.example)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
