@@ -7,7 +7,6 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const twilio = require('twilio'); 
-// No se necesita 'crypto' si usamos CallSid de Twilio como ID de estado.
 
 const Database = require('./Database');
 const AsistenteIA = require('./AsistenteIA');
@@ -17,10 +16,6 @@ const PORT = process.env.PORT || 3000;
 
 // Constantes de configuración (obtenidas de variables de entorno)
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
-// Las credenciales de Twilio no son necesarias para el runtime de Twilio, 
-// pero se incluyen como recordatorio si se quisiera usar la API REST de Twilio.
-// const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-// const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
 const db = new Database(); 
 const asistenteIA = new AsistenteIA(); 
@@ -113,7 +108,8 @@ app.get('/', async (req, res, next) => {
     try {
         const menu = await db.obtenerMenu();
         const menuHTML = menu.map(p => 
-            `<li>${p.nombre} (<span class="font-semibold">${p.area_preparacion.toUpperCase()}</span>) - $${p.precio.toFixed(2)}</li>`
+            // FIX APLICADO AQUÍ: Asegura que p.precio es un número antes de toFixed
+            `<li>${p.nombre} (<span class="font-semibold">${p.area_preparacion.toUpperCase()}</span>) - $${parseFloat(p.precio ?? 0).toFixed(2)}</li>`
         ).join('');
 
         const html = `
@@ -340,7 +336,7 @@ app.post('/twilio-process-upsell', async (req, res, next) => {
                     );
 
                     if (nuevosItems.length > 0) {
-                        const newTotal = state.total + nuevosItems.reduce((sum, item) => sum + item.precio, 0);
+                        const newTotal = state.total + nuevosItems.reduce((sum, item) => sum + parseFloat(item.precio ?? 0), 0);
                         
                         updateState(CallSid, { 
                             items: [...state.items, ...nuevosItems], 
@@ -429,7 +425,8 @@ app.post('/twilio-process-payment', async (req, res, next) => {
             return {
                 nombre: name,
                 area_preparacion: item.area_preparacion,
-                precio: item.precio // El precio individual es el base. El total es el que importa.
+                // Usamos parseFloat aquí por seguridad, aunque este precio es solo informativo
+                precio: parseFloat(item.precio ?? 0)
             };
         });
         
@@ -456,6 +453,17 @@ app.post('/twilio-process-payment', async (req, res, next) => {
         next(error);
     }
 });
+
+// 5.6. Manejo de Fallbacks si Twilio no recibe respuesta o hay error de transcripción
+app.post('/twilio-process-order-base-fallback', (req, res) => {
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Parece que no escuché nada. Por favor, ¿podría repetir su orden?');
+    twiml.redirect('/twilio-voice'); // Reinicia la conversación
+    res.type('text/xml');
+    res.send(twiml.toString());
+});
+
 
 // --- 6. RUTAS DEL PANEL DE ADMINISTRACIÓN (PROTEGIDAS) ---
 
