@@ -71,6 +71,7 @@ class Database {
                 console.log("Insertando datos iniciales en la tabla de menú...");
                 const initialMenu = [
                     ["Café Americano", 2.50, "barra"],
+                    ["Capuchino", 3.50, "barra"], // <-- Nuevo producto añadido
                     ["Latte de Vainilla", 3.75, "barra"],
                     ["Muffin de Arándanos", 2.00, "cocina"],
                     ["Sándwich de Pavo", 6.50, "cocina"]
