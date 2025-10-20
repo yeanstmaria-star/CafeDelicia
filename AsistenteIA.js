@@ -123,7 +123,7 @@ class AsistenteIA {
             if (!resultText) {
                 // Maneja el caso de respuesta vacía o con estructura inesperada
                 console.error("[ERROR GEMINI] Respuesta de texto vacía o sin candidatos.");
-                throw new Error("Respuesta JSON vacía o inválida de la IA.");
+                throw new Error("API_RESPONSE_EMPTY");
             }
 
             let aiResponse;
@@ -133,8 +133,7 @@ class AsistenteIA {
             } catch (parseError) {
                 // Si el parsing falla, registra el texto que causó el problema
                 console.error(`[ERROR GEMINI] Fallo al parsear JSON. Texto recibido: ${resultText.substring(0, 200)}...`);
-                // Relanza un error general para ser capturado por el bloque exterior
-                throw new Error("La IA no devolvió un JSON válido.");
+                throw new Error("JSON_PARSE_FAILED");
             }
 
 
@@ -155,11 +154,28 @@ class AsistenteIA {
 
         } catch (error) {
             // Este bloque atrapa fallos de Axios (timeouts/red) y errores de JSON/texto fallidos
-            console.error("[ERROR GEMINI] Fallo en la llamada a la IA:", error.response?.data || error.message);
+            
+            let logDetails = error.message;
+
+            // Mejora el diagnóstico de errores específicos
+            if (error.message === "JSON_PARSE_FAILED") {
+                logDetails = "Fallo de parseo de JSON (LLM devolvió texto no JSON).";
+            } else if (error.message === "API_RESPONSE_EMPTY") {
+                logDetails = "Respuesta de la API de Gemini vacía o incompleta.";
+            } else if (error.response) {
+                // Error de Axios (red, 4xx, 5xx)
+                logDetails = `Fallo de la API (HTTP ${error.response.status}): ${JSON.stringify(error.response.data)}`;
+            } else {
+                // Otros errores (timeout, conexión)
+                logDetails = `Error de conexión o timeout: ${error.message}`;
+            }
+
+            console.error(`[FALLBACK DE CONVERSACIÓN] Se activa el manejo de errores: ${logDetails}`);
+
             // Fallback en caso de error de la IA
             // Devolver un objeto válido asegura que el servidor Express siempre pueda responder con TwiML
             return {
-                mensaje: "Lo siento, mi conexión con la cocina está fallando. ¿Podrías repetir tu pedido por favor?",
+                mensaje: "Lo siento, hubo un problema técnico. ¿Podrías repetir la última parte de tu pedido, por favor?",
                 estadoActualizado: estadoActual
             };
         }
