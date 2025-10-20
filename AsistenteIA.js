@@ -37,9 +37,12 @@ class AsistenteIA {
                                 "type": "ARRAY", 
                                 "items": { "type": "STRING" },
                                 "description": "Modificaciones (ej: leche de avena, shot extra)."
-                            }
+                            },
+                            // NUEVO: Campo para que la IA sepa dónde enviar el ítem.
+                            "area_preparacion": { "type": "STRING", "description": "El área de preparación del menú (barra o cocina)." } 
                         },
-                        "required": ["nombre"]
+                        // Se agrega area_preparacion como campo obligatorio en el objeto de ítem.
+                        "required": ["nombre", "area_preparacion"] 
                     }
                 },
                 "nombre_cliente": {
@@ -52,7 +55,7 @@ class AsistenteIA {
                 },
                 "llm_response_text": {
                     "type": "STRING",
-                    "description": "El mensaje de respuesta amable del barista para el cliente, basado en el estado actual y la transcripción."
+                    "description": "El mensaje de respuesta AMABLE Y CONCISA del barista para el cliente, basado en el estado actual y la transcripción. NO DEBE EXCEDER LAS 15 PALABRAS."
                 }
             },
             required: ["next_stage", "items_update", "llm_response_text"]
@@ -75,22 +78,14 @@ class AsistenteIA {
 
         // Construir el prompt para el LLM
         const menu = this.getMenuContexto();
-        const prompt = `Actúa como un barista experto, amable y eficiente. Tu tarea es analizar la transcripción del cliente y determinar el nuevo estado de la conversación, la orden confirmada y generar una respuesta.
+        const prompt = `INSTRUCCIÓN RÁPIDA: Eres un barista. Analiza la transcripción, actualiza la orden, determina el nuevo estado y genera una respuesta CONCISA.
 
-        --- CONTEXTO ---
-        MENÚ DISPONIBLE: ${JSON.stringify(menu)}
-        ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
-        TRANSCRIPCIÓN DEL CLIENTE: "${transcripcion}"
-
-        --- INSTRUCCIONES DE ESTADO ---
-        1. **INITIAL_ORDER**: Esperando el primer pedido.
-        2. **CUSTOMIZATION**: Se pidió una bebida, esperando personalizaciones (leche, shots). Si la transcripción no tiene personalizaciones, ve a UPSELL_FINAL.
-        3. **UPSELL_FINAL**: Orden casi completa. Pregunta si desean algo más (ej. un postre si solo pidió café). Si dice 'No', ve a CONFIRMATION.
-        4. **CONFIRMATION**: El cliente dijo que es todo. Genera un resumen de la orden y espera la confirmación final ('Sí' o 'No'). Si dice 'Sí', ve a IDENTIFICATION.
-        5. **IDENTIFICATION**: La orden fue confirmada. Pide el nombre y número de teléfono.
-        6. **FINALIZED**: Se tienen todos los datos y la orden está lista para ser enviada a la base de datos.
-
-        Genera únicamente un objeto JSON que siga el esquema provisto. La llave 'items_update' debe contener la lista completa y consolidada de todos los productos confirmados hasta ahora. Si el cliente niega o cancela algo, retíralo de la lista.
+        MENÚ: ${JSON.stringify(menu)}
+        ESTADO ACTUAL: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
+        CLIENTE DICE: "${transcripcion}"
+        
+        Sigue los estados: INITIAL_ORDER -> CUSTOMIZATION -> UPSELL_FINAL -> CONFIRMATION -> IDENTIFICATION -> FINALIZED.
+        Genera el JSON completo. La respuesta de texto debe ser natural pero *máximo 15 palabras*.
         `;
         
         // Configuración para la respuesta JSON estructurada
@@ -100,8 +95,9 @@ class AsistenteIA {
                 responseMimeType: "application/json",
                 responseSchema: this.JSON_SCHEMA
             },
+            // Instrucción de sistema más corta y orientada a la velocidad
             systemInstruction: {
-                parts: [{ text: "Eres un Barista IA y tu única función es analizar la conversación y devolver un objeto JSON estructurado." }]
+                parts: [{ text: "Eres un Barista IA. Analiza RÁPIDAMENTE la transcripción y devuelve SOLO el objeto JSON estructurado. Prioriza la velocidad y concisión en la respuesta de texto." }]
             }
         };
 
@@ -122,7 +118,7 @@ class AsistenteIA {
                 stage: aiResponse.next_stage,
                 items: aiResponse.items_update || [],
                 nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
-                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonoCliente,
+                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente,
                 // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
             };
 
