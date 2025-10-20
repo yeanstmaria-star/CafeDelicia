@@ -76,6 +76,17 @@ class AsistenteIA {
     async procesarConversacion(transcripcion, estadoActual) {
         console.log(`IA procesando transcripción recibida: "${transcripcion}" en etapa: ${estadoActual.stage}`);
 
+        // --- INICIO: VERIFICACIÓN CRÍTICA DE CLAVE ---
+        if (!GEMINI_API_KEY || GEMINI_API_KEY === '') {
+            const fallbackMessage = "Lo siento, parece que la clave de la IA no está configurada. Por favor, revise la variable GEMINI_API_KEY en su entorno de Render.";
+            console.error(`[ERROR CRÍTICO] La clave de API de Gemini está vacía. No se puede continuar.`);
+            return {
+                mensaje: fallbackMessage,
+                estadoActualizado: estadoActual
+            };
+        }
+        // --- FIN: VERIFICACIÓN CRÍTICA DE CLAVE ---
+
         // Construir el prompt para el LLM
         const menu = this.getMenuContexto();
         const prompt = `INSTRUCCIÓN RÁPIDA: Eres un barista. Analiza la transcripción, actualiza la orden, determina el nuevo estado y genera una respuesta CONCISA.
