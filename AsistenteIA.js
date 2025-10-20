@@ -16,24 +16,22 @@ class AsistenteIA {
         console.log(`IA procesando transcripción recibida: "${transcripcion}"`);
         
         // Mapeo flexible para simular la comprensión de un LLM real.
-        // Esto permite que el usuario diga "café" y se mapee a "Café Americano".
         const keywordMap = {
             'americano': 'Café Americano',
-            'café': 'Café Americano',
+            'capuchino': 'Capuchino', // <-- ¡Aseguramos la palabra clave!
             'latte': 'Latte de Vainilla',
             'vainilla': 'Latte de Vainilla',
             'muffin': 'Muffin de Arándanos',
             'arándanos': 'Muffin de Arándanos',
             'sándwich': 'Sándwich de Pavo',
             'pavo': 'Sándwich de Pavo',
-            'sandwich': 'Sándwich de Pavo', // Variación de ortografía común
+            'sandwich': 'Sándwich de Pavo', 
         };
         
         const itemsEncontrados = [];
         const transcripcionLower = transcripcion.toLowerCase();
         
         // Tokenizar la transcripción para buscar palabras clave
-        // Usamos una expresión regular simple para encontrar palabras completas.
         const words = transcripcionLower.match(/\b(\w+)\b/g) || [];
         
         const foundNames = new Set();
@@ -42,11 +40,17 @@ class AsistenteIA {
             if (keywordMap[word]) {
                 const itemName = keywordMap[word];
                 if (!foundNames.has(itemName)) {
-                    // Solo agregamos el item si no ha sido agregado ya (para evitar duplicados)
                     itemsEncontrados.push({ nombre: itemName });
                     foundNames.add(itemName);
                 }
             }
+        }
+
+        // Caso especial: Si el usuario solo dice "café" sin modificador y no se encontró nada, asumimos Americano
+        if (transcripcionLower.includes('café') && itemsEncontrados.length === 0) {
+             const americano = 'Café Americano';
+             itemsEncontrados.push({ nombre: americano });
+             foundNames.add(americano);
         }
         
         let mensajeRespuesta;
