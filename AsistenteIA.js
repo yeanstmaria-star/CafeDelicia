@@ -1,110 +1,323 @@
 // Archivo: AsistenteIA.js
-// Clase simulada para manejar la lógica de la IA (Gemini API).
+// Simula la lógica de un asistente de IA conversacional (como Gemini) para un barista.
+// Esta versión es más flexible, responde preguntas y maneja un diálogo natural.
 
 class AsistenteIA {
     constructor() {
         console.log("AsistenteIA: Inicializado (Simulación de Asistente Barista - Conversación).");
+
+        // Base de conocimiento para la IA: productos, extras y palabras clave.
+        // Esto simula la información que la IA usaría para entender al cliente.
+        this.knowledgeBase = {
+            productos: [
+                { nombre: 'Café Americano', precio: 3.50, area: 'barra', keywords: ['americano', 'café solo', 'café negro'] },
+                { nombre: 'Capuchino', precio: 4.50, area: 'barra', keywords: ['capuchino'] },
+                { nombre: 'Latte de Vainilla', precio: 5.00, area: 'barra', keywords: ['latte', 'vainilla'] },
+                { nombre: 'Sándwich de Pavo', precio: 5.00, area: 'cocina', keywords: ['sándwich', 'pavo'], descripcion: 'Nuestro sándwich de pavo viene con pan artesanal, pavo horneado, queso suizo, lechuga y tomate.' },
+                { nombre: 'Muffin de Arándanos', precio: 3.00, area: 'cocina', keywords: ['muffin', 'arándano', 'arándanos', 'panecillo'], descripcion: 'Un muffin esponjoso horneado con arándanos frescos.' }
+            ],
+            personalizaciones: [
+                { id: 'shot_espresso', name: 'Shot Extra de Espresso', precio: 1.00, keywords: ['shot', 'espresso', 'extra de café'] },
+                { id: 'leche_almendra', name: 'Leche de Almendra', precio: 0.75, keywords: ['almendra'] },
+                { id: 'leche_avena', name: 'Leche de Avena', precio: 0.75, keywords: ['avena'] }
+            ],
+            palabrasClavePreguntas: ['qué lleva', 'ingredientes', 'qué otros', 'opciones', 'tienes de postre'],
+            palabrasClavePositivas: ['sí', 'si', 'claro', 'me gustaría', 'añade'],
+            palabrasClaveNegativas: ['no', 'nada más', 'eso es todo'],
+            palabrasClavePago: {
+                ahora: ['ahora', 'teléfono', 'aquí'],
+                llegar: ['llegar', 'allá', 'cafetería']
+            }
+        };
     }
 
     /**
-     * Extrae los items, personalizaciones y calcula el total de la transcripción actual.
-     * La IA se centra solo en la identificación de productos y extras.
-     * @param {string} transcripcion - El texto transcrito de la llamada.
-     * @returns {object} Objeto con 'items' encontrados (incluyendo precio y área), 'personalizaciones', y el 'costo total'.
+     * Analiza la transcripción para determinar la intención del cliente.
+     * @param {string} transcripcion La transcripción de voz del cliente.
+     * @returns {string} La intención identificada ('ORDENANDO', 'PREGUNTANDO', 'CONFIRMANDO_SI', 'CONFIRMANDO_NO', 'PAGO', 'IDENTIFICACION').
      */
-    async identificarItems(transcripcion) {
-        console.log(`IA procesando transcripción recibida: "${transcripcion}"`);
+    determinarIntencion(transcripcion) {
+        const texto = transcripcion.toLowerCase();
+
+        if (this.knowledgeBase.palabrasClavePreguntas.some(k => texto.includes(k))) {
+            return 'PREGUNTANDO';
+        }
+
+        if (this.knowledgeBase.productos.some(p => p.keywords.some(k => texto.includes(k)))) {
+            return 'ORDENANDO';
+        }
+
+        if (this.knowledgeBase.personalizaciones.some(p => p.keywords.some(k => texto.includes(k)))) {
+            return 'ORDENANDO'; // Personalizar también es parte de la orden
+        }
         
-        // --- 1. CONFIGURACIÓN DEL MENÚ Y PRECIOS SIMULADOS ---
-        const itemPriceMap = {
-            'Café Americano': 2.50,
-            'Capuchino': 3.50,
-            'Latte de Vainilla': 3.75,
-            'Muffin de Arándanos': 2.00,
-            'Sándwich de Pavo': 6.50,
-        };
+        // Expresión regular para detectar nombres (dos palabras con mayúscula)
+        if (/\b[A-Z][a-z]+ [A-Z][a-z]+\b/.test(transcripcion)) {
+             return 'IDENTIFICACION';
+        }
+
+        // Expresión regular para detectar números de teléfono (simplificada)
+        if (/\b\d{7,10}\b/.test(texto.replace(/\s/g, ''))) {
+             return 'IDENTIFICACION';
+        }
+
+        if (this.knowledgeBase.palabrasClavePago.ahora.some(k => texto.includes(k)) || this.knowledgeBase.palabrasClavePago.llegar.some(k => texto.includes(k))) {
+            return 'PAGO';
+        }
         
-        const customizationPrice = 0.75;
-        
-        // Mapeo de palabras clave (base items y personalizaciones)
-        const keywordMap = {
-            'americano': { name: 'Café Americano', type: 'base', area: 'barra' },
-            'capuchino': { name: 'Capuchino', type: 'base', area: 'barra' },
-            'latte': { name: 'Latte de Vainilla', type: 'base', area: 'barra' },
-            'vainilla': { name: 'Latte de Vainilla', type: 'base', area: 'barra' },
-            'muffin': { name: 'Muffin de Arándanos', type: 'base', area: 'cocina' },
-            'arándanos': { name: 'Muffin de Arándanos', type: 'base', area: 'cocina' },
-            'arándano': { name: 'Muffin de Arándanos', type: 'base', area: 'cocina' },
-            'sándwich': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
-            'pavo': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
-            'sandwich': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
-            
-            // Palabras clave para personalización (con costo)
-            'avena': { name: 'Leche de Avena', type: 'custom', appliesTo: ['barra'] },
-            'almendra': { name: 'Leche de Almendra', type: 'custom', appliesTo: ['barra'] },
-            'shot': { name: 'Shot Extra de Espresso', type: 'custom', appliesTo: ['barra'] },
-            'crema': { name: 'Crema Batida', type: 'custom', appliesTo: ['barra'] },
-            'sirope': { name: 'Sirope Adicional', type: 'custom', appliesTo: ['barra'] },
-            'extra': { name: 'Extra (General)', type: 'custom', appliesTo: ['barra'] },
-            
-            // Palabras clave para UpSell (solo ayuda a identificar respuesta positiva)
-            'sí': { name: 'Aceptó UpSell', type: 'upsell' },
-            'claro': { name: 'Aceptó UpSell', type: 'upsell' },
+        if (this.knowledgeBase.palabrasClavePositivas.some(k => texto.includes(k))) {
+            return 'CONFIRMANDO_SI';
+        }
+
+        if (this.knowledgeBase.palabrasClaveNegativas.some(k => texto.includes(k))) {
+            return 'CONFIRMANDO_NO';
+        }
+
+        return 'DESCONOCIDO';
+    }
+
+    /**
+     * Procesa la transcripción del cliente basándose en el estado actual de la conversación.
+     * @param {string} transcripcion La voz del cliente convertida a texto.
+     * @param {object} estadoActual El estado de la conversación (items, etapa, etc.).
+     * @returns {object} Un objeto con la respuesta de la IA y el estado actualizado.
+     */
+    async procesarConversacion(transcripcion, estadoActual) {
+        console.log(`IA procesando transcripción recibida: "${transcripcion}" en etapa: ${estadoActual.stage}`);
+        const intencion = this.determinarIntencion(transcripcion);
+
+        let respuesta = {
+            mensaje: "Lo siento, no te entendí. ¿Podrías repetirlo?",
+            estadoActualizado: estadoActual
         };
 
-        // --- 2. EXTRACCIÓN DE ITEMS Y PERSONALIZACIÓN ---
-        const itemsEncontrados = [];
-        const personalizaciones = [];
-        const transcripcionLower = transcripcion.toLowerCase();
-        let total = 0;
+        switch (intencion) {
+            case 'ORDENANDO':
+                respuesta = this.procesarPedido(transcripcion, estadoActual);
+                break;
+            case 'PREGUNTANDO':
+                respuesta = this.responderPregunta(transcripcion, estadoActual);
+                break;
+            case 'CONFIRMANDO_SI':
+                respuesta = this.procesarConfirmacionPositiva(estadoActual);
+                break;
+            case 'CONFIRMANDO_NO':
+                respuesta = this.procesarConfirmacionNegativa(estadoActual);
+                break;
+            case 'PAGO':
+                respuesta = this.procesarPago(transcripcion, estadoActual);
+                break;
+            case 'IDENTIFICACION':
+                respuesta = this.procesarIdentificacion(transcripcion, estadoActual);
+                break;
+        }
+
+        return respuesta;
+    }
+    
+    /**
+     * Extrae el nombre y el teléfono de la transcripción.
+     * @param {string} transcripcion - La transcripción de la voz.
+     * @returns {object} - Un objeto con el nombre y el teléfono.
+     */
+    extraerDatosCliente(transcripcion) {
+        let nombre = null;
+        let telefono = null;
+
+        // Extraer nombre (dos palabras que empiezan con mayúscula)
+        const nombreMatch = transcripcion.match(/\b[A-Z][a-z]+ [A-Z][a-z]+\b/);
+        if (nombreMatch) {
+            nombre = nombreMatch[0];
+        }
+
+        // Extraer número de teléfono (secuencia de 7 a 10 dígitos)
+        const telefonoMatch = transcripcion.replace(/\s/g, '').match(/\b\d{7,10}\b/);
+        if (telefonoMatch) {
+            telefono = telefonoMatch[0];
+        }
+
+        return { nombre, telefono };
+    }
+
+
+    /**
+     * Procesa una transcripción que contiene un pedido.
+     */
+    procesarPedido(transcripcion, estadoActual) {
+        const texto = transcripcion.toLowerCase();
+        let itemsEncontrados = [];
+        let personalizacionesEncontradas = [];
         
-        const words = transcripcionLower.match(/\b(\w+)\b/g) || [];
-        const foundBaseNames = new Set();
-        
-        for (const word of words) {
-            const match = keywordMap[word];
-            if (match) {
-                if (match.type === 'base') {
-                    if (!foundBaseNames.has(match.name)) {
-                        itemsEncontrados.push({ 
-                            nombre: match.name, 
-                            precio: itemPriceMap[match.name],
-                            area_preparacion: match.area 
-                        });
-                        total += itemPriceMap[match.name];
-                        foundBaseNames.add(match.name);
-                    }
-                } else if (match.type === 'custom') {
-                    // La personalización se añade siempre, el servidor se encarga de aplicarla a un item de barra
-                    const customName = match.name;
-                    if (!personalizaciones.some(c => c.name === customName)) {
-                        personalizaciones.push({ name: customName, cost: customizationPrice });
-                        // No sumamos el costo aquí, lo hará el servidor para evitar duplicados si se llama varias veces.
-                    }
-                }
+        // Identificar productos principales
+        this.knowledgeBase.productos.forEach(producto => {
+            if (producto.keywords.some(k => texto.includes(k)) && !estadoActual.items.some(i => i.nombre === producto.nombre)) {
+                itemsEncontrados.push({ ...producto, area_preparacion: producto.area });
             }
+        });
+        
+        // Identificar personalizaciones
+        this.knowledgeBase.personalizaciones.forEach(custom => {
+            if (custom.keywords.some(k => texto.includes(k)) && !estadoActual.personalizaciones.some(p => p.id === custom.id)) {
+                personalizacionesEncontradas.push(custom);
+            }
+        });
+
+        const itemsActualizados = [...estadoActual.items, ...itemsEncontrados];
+        const personalizacionesActualizadas = [...estadoActual.personalizaciones, ...personalizacionesEncontradas];
+        const totalActualizado = this.calcularTotal(itemsActualizados, personalizacionesActualizadas);
+        
+        // Actualizar el estado con los nuevos items
+        const estadoActualizado = {
+            ...estadoActual,
+            items: itemsActualizados,
+            personalizaciones: personalizacionesActualizadas,
+            total: totalActualizado,
+        };
+
+        // Generar respuesta y determinar la siguiente etapa
+        let mensaje = `¡Anotado! ${[...itemsEncontrados.map(i => i.nombre), ...personalizacionesEncontradas.map(p => p.name)].join(' y ')}.`;
+        
+        // Transición de etapa lógica
+        const tieneBebida = estadoActualizado.items.some(i => i.area === 'barra');
+        const tieneComida = estadoActualizado.items.some(i => i.area === 'cocina');
+
+        if (tieneBebida && estadoActual.stage === 'INITIAL_ORDER') {
+            mensaje += ' ¿Deseas alguna personalización como leche de avena o un shot extra de espresso?';
+            estadoActualizado.stage = 'CUSTOMIZATION';
+        } else if (tieneBebida && tieneComida) {
+            mensaje += ' ¡Excelente combinación! ¿Algo más para ti?';
+            estadoActualizado.stage = 'UPSELL_FINAL';
+        } else {
+            mensaje += ' ¿Te gustaría añadir algo más a tu pedido?';
+            estadoActualizado.stage = 'UPSELL';
+        }
+        
+        return { mensaje, estadoActualizado };
+    }
+
+    /**
+     * Responde a preguntas sobre el menú.
+     */
+    responderPregunta(transcripcion, estadoActual) {
+        const texto = transcripcion.toLowerCase();
+        let mensaje = "Claro, te cuento. ";
+
+        if (texto.includes('postres') || texto.includes('muffin')) {
+            const postres = this.knowledgeBase.productos.filter(p => p.area === 'cocina' && p.nombre.toLowerCase().includes('muffin'));
+            mensaje += `De postre, te puedo ofrecer ${postres.map(p => p.nombre).join(' o ')}.`;
+        } else if (texto.includes('sándwich')) {
+            const sandwich = this.knowledgeBase.productos.find(p => p.nombre.includes('Sándwich'));
+            mensaje += `El ${sandwich.nombre} lleva ${sandwich.descripcion}.`;
+        } else {
+            mensaje = "Puedes pedir cafés, sándwiches o muffins. ¿Qué te gustaría saber?";
+        }
+        
+        mensaje += " ¿Deseas ordenar algo de esto?";
+        
+        // No cambiamos el estado, solo respondemos la pregunta
+        return { mensaje, estadoActualizado: estadoActual };
+    }
+
+    /**
+     * Procesa una confirmación positiva (ej. "sí").
+     */
+    procesarConfirmacionPositiva(estadoActual) {
+        let mensaje = '¡Perfecto!';
+        let estadoActualizado = { ...estadoActual };
+
+        // Lógica simple basada en la etapa actual
+        if (estadoActual.stage === 'UPSELL' || estadoActual.stage === 'UPSELL_FINAL') {
+            mensaje = 'Genial, ¿qué más te gustaría añadir?';
+            // Mantenemos la etapa para que el siguiente input sea una orden
+        } else {
+            // Si dice "sí" en otra etapa, es ambiguo. Pedimos clarificación.
+            mensaje = '¿Sí a qué, disculpa? ¿Podrías ser más específico?';
         }
 
-        // Caso especial: Si el usuario solo dice "café" sin modificador, asumimos Americano.
-        if (transcripcionLower.includes('café') && itemsEncontrados.length === 0) {
-             const americano = 'Café Americano';
-             itemsEncontrados.push({ nombre: americano, precio: itemPriceMap[americano], area_preparacion: 'barra' });
-             total += itemPriceMap[americano];
-             foundBaseNames.add(americano);
+        return { mensaje, estadoActualizado };
+    }
+
+    /**
+     * Procesa una confirmación negativa (ej. "no, gracias").
+     */
+    procesarConfirmacionNegativa(estadoActual) {
+        // Si el cliente dice no, pasamos directamente al resumen del pedido.
+        return this.generarResumen(estadoActual);
+    }
+    
+    /**
+     * Procesa la preferencia de pago del cliente.
+     */
+    procesarPago(transcripcion, estadoActual) {
+        const texto = transcripcion.toLowerCase();
+        let mensaje = "";
+        let estadoActualizado = { ...estadoActual, stage: 'IDENTIFICATION' };
+
+        if (this.knowledgeBase.palabrasClavePago.ahora.some(k => texto.includes(k))) {
+            mensaje = 'Entendido, pagarás ahora. (Simulación: El pago se procesaría aquí). Para registrar tu pedido, por favor dime tu nombre y número de teléfono.';
+        } else {
+            mensaje = 'Perfecto, pagarás al llegar. Para registrar tu pedido, por favor dime tu nombre y número de teléfono.';
+        }
+
+        return { mensaje, estadoActualizado };
+    }
+    
+    /**
+     * Procesa el nombre y teléfono del cliente.
+     */
+    procesarIdentificacion(transcripcion, estadoActual) {
+        const { nombre, telefono } = this.extraerDatosCliente(transcripcion);
+        
+        let mensaje = "";
+        let estadoActualizado = { ...estadoActual };
+
+        if (nombre) {
+            estadoActualizado.nombreCliente = nombre;
+            mensaje += `Nombre ${nombre} registrado. `;
+        }
+        if (telefono) {
+            estadoActualizado.telefonoCliente = telefono;
+            mensaje += `Teléfono ${telefono} registrado. `;
         }
         
-        // Simulación de identificación de pago para el último paso.
-        const pagoAhora = transcripcionLower.includes('ahora') || transcripcionLower.includes('teléfono');
+        if (!nombre && !telefono) {
+            mensaje = 'No pude entender tu nombre o teléfono. ¿Podrías repetirlo, por favor?';
+        } else {
+            estadoActualizado.stage = 'FINALIZED'; // Marcamos la orden como lista para ser guardada
+            mensaje += "¡Gracias! Tu pedido está listo para ser registrado.";
+        }
+
+        return { mensaje, estadoActualizado };
+    }
+
+
+    /**
+     * Genera el resumen final del pedido antes de la confirmación.
+     */
+    generarResumen(estadoActual) {
+        let mensaje = "Muy bien. Entonces, tu pedido final es: ";
+        let itemSummary = estadoActual.items.map(item => item.nombre).join(', ');
+        if (estadoActual.personalizaciones.length > 0) {
+            itemSummary += ` con ${estadoActual.personalizaciones.map(c => c.name).join(' y ')}.`;
+        }
         
-        return {
-            items: itemsEncontrados,
-            personalizaciones: personalizaciones,
-            totalInicial: total,
-            pagoAhora: pagoAhora,
-            // Simulación de upselling (respuesta afirmativa)
-            aceptaUpsell: transcripcionLower.includes('sí') || transcripcionLower.includes('claro') || transcripcionLower.includes('algo más')
-        };
+        const totalFormat = estadoActual.total.toFixed(2);
+        mensaje += `${itemSummary}. El total es de $${totalFormat}. ¿Es correcto?`;
+        
+        const estadoActualizado = { ...estadoActual, stage: 'CONFIRMATION' };
+        
+        return { mensaje, estadoActualizado };
+    }
+
+    /**
+     * Calcula el total de la orden.
+     */
+    calcularTotal(items, personalizaciones) {
+        const totalItems = items.reduce((sum, item) => sum + parseFloat(item.precio ?? 0), 0);
+        const totalCustoms = personalizaciones.reduce((sum, custom) => sum + parseFloat(custom.precio ?? 0), 0);
+        return totalItems + totalCustoms;
     }
 }
 
 module.exports = AsistenteIA;
+
