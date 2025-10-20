@@ -1,5 +1,5 @@
 // Archivo: AsistenteIA.js
-// Clase simulada para manejar la lógica de la IA (Gemini API) como un Asistente Barista.
+// Clase simulada para manejar la lógica de la IA (Gemini API).
 
 class AsistenteIA {
     constructor() {
@@ -7,11 +7,12 @@ class AsistenteIA {
     }
 
     /**
-     * Procesa la transcripción de voz para extraer los items, personalizaciones y generar la respuesta conversacional.
+     * Extrae los items, personalizaciones y calcula el total de la transcripción actual.
+     * La IA se centra solo en la identificación de productos y extras.
      * @param {string} transcripcion - El texto transcrito de la llamada.
-     * @returns {object} Objeto con 'items' encontrados, 'mensajeRespuesta' (el script de la barista), y el 'costo total'.
+     * @returns {object} Objeto con 'items' encontrados (incluyendo precio y área), 'personalizaciones', y el 'costo total'.
      */
-    async procesarOrden(transcripcion) {
+    async identificarItems(transcripcion) {
         console.log(`IA procesando transcripción recibida: "${transcripcion}"`);
         
         // --- 1. CONFIGURACIÓN DEL MENÚ Y PRECIOS SIMULADOS ---
@@ -36,16 +37,19 @@ class AsistenteIA {
             'arándano': { name: 'Muffin de Arándanos', type: 'base', area: 'cocina' },
             'sándwich': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
             'pavo': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
+            'sandwich': { name: 'Sándwich de Pavo', type: 'base', area: 'cocina' },
             
-            // Palabras clave para simular extras/personalización (con costo)
+            // Palabras clave para personalización (con costo)
             'avena': { name: 'Leche de Avena', type: 'custom', appliesTo: ['barra'] },
             'almendra': { name: 'Leche de Almendra', type: 'custom', appliesTo: ['barra'] },
             'shot': { name: 'Shot Extra de Espresso', type: 'custom', appliesTo: ['barra'] },
             'crema': { name: 'Crema Batida', type: 'custom', appliesTo: ['barra'] },
+            'sirope': { name: 'Sirope Adicional', type: 'custom', appliesTo: ['barra'] },
+            'extra': { name: 'Extra (General)', type: 'custom', appliesTo: ['barra'] },
             
-            // Palabras clave para simular upselling (sin costo, solo texto)
-            'pan dulce': { name: 'Pan Dulce (Upsell)', type: 'upsell' },
-            'galleta': { name: 'Galleta (Upsell)', type: 'upsell' },
+            // Palabras clave para UpSell (solo ayuda a identificar respuesta positiva)
+            'sí': { name: 'Aceptó UpSell', type: 'upsell' },
+            'claro': { name: 'Aceptó UpSell', type: 'upsell' },
         };
 
         // --- 2. EXTRACCIÓN DE ITEMS Y PERSONALIZACIÓN ---
@@ -71,66 +75,34 @@ class AsistenteIA {
                         foundBaseNames.add(match.name);
                     }
                 } else if (match.type === 'custom') {
-                    // Solo agregamos la personalización si hay un item de barra
-                    const hasBarItem = itemsEncontrados.some(item => item.area_preparacion === 'barra');
-                    if (hasBarItem && !personalizaciones.some(c => c.name === match.name)) {
-                        personalizaciones.push({ name: match.name, cost: customizationPrice });
-                        total += customizationPrice;
+                    // La personalización se añade siempre, el servidor se encarga de aplicarla a un item de barra
+                    const customName = match.name;
+                    if (!personalizaciones.some(c => c.name === customName)) {
+                        personalizaciones.push({ name: customName, cost: customizationPrice });
+                        // No sumamos el costo aquí, lo hará el servidor para evitar duplicados si se llama varias veces.
                     }
                 }
             }
         }
 
-        // Caso especial: Si el usuario solo dice "café", asumimos Americano.
+        // Caso especial: Si el usuario solo dice "café" sin modificador, asumimos Americano.
         if (transcripcionLower.includes('café') && itemsEncontrados.length === 0) {
              const americano = 'Café Americano';
              itemsEncontrados.push({ nombre: americano, precio: itemPriceMap[americano], area_preparacion: 'barra' });
              total += itemPriceMap[americano];
              foundBaseNames.add(americano);
         }
-
-        // --- 3. GENERACIÓN DEL SCRIPT CONVERSACIONAL (Respuesta Única) ---
-        let mensajeRespuesta = "";
         
-        if (itemsEncontrados.length > 0) {
-            // A. Saludo inicial (Simulado)
-            mensajeRespuesta += "¡Hola! ¡Gracias por elegir Cafe Delicia! ";
-            
-            // B. Personalización del pedido (Simulado)
-            let itemSummary = itemsEncontrados.map(item => item.nombre).join(' y ');
-            
-            if (personalizaciones.length > 0) {
-                const customNames = personalizaciones.map(c => c.name).join(', ');
-                itemSummary += ` con el extra de ${customNames}.`;
-            } else {
-                // Si la IA no encontró personalización, la simula.
-                mensajeRespuesta += "Ya que has pedido tu café, ¿quieres agregar un shot extra de espresso o cambiar la leche por alguna alternativa como almendra o avena? ";
-                // Asumimos que la respuesta fue "No" o fue silenciosa, y continuamos al upselling.
-            }
-            
-            // C. Upselling o pedido adicional (Simulado)
-            mensajeRespuesta += "¡Perfecto! ¿Quieres agregar algo más a tu orden, como un pan dulce o un sándwich, para acompañar tu bebida? ";
-            
-            // D. Resumen del pedido (Generado)
-            mensajeRespuesta += `Muy bien. Entonces, tu pedido es: ${itemSummary}. `;
-            
-            // Formatear el total
-            const totalFormat = total.toFixed(2); 
-            mensajeRespuesta += `El total es de $${totalFormat}. `;
-            
-            // E. Confirmación de pago e Información de identificación
-            mensajeRespuesta += "¿Prefieres pagar ahora por teléfono o cuando llegues a la cafetería? Si eliges pagar al llegar, ¿podrías decirme tu nombre y número de teléfono para registrar el pedido?`;"
-            
-            console.log(`IA: Total simulado: $${totalFormat}`);
-        } else {
-            mensajeRespuesta = "Lo siento, no pude identificar ningún producto del menú en su orden. Por favor, intente de nuevo y hable claramente. Por ejemplo, diga 'Quiero un café americano y un muffin'.";
-            console.log("IA: No se identificó ningún item.");
-        }
-
-        // La función debe devolver los items BASE (para la BD) y el mensaje de respuesta (para Twilio)
+        // Simulación de identificación de pago para el último paso.
+        const pagoAhora = transcripcionLower.includes('ahora') || transcripcionLower.includes('teléfono');
+        
         return {
-            items: itemsEncontrados, // La base de datos solo almacena los ítems principales
-            mensajeRespuesta: mensajeRespuesta
+            items: itemsEncontrados,
+            personalizaciones: personalizaciones,
+            totalInicial: total,
+            pagoAhora: pagoAhora,
+            // Simulación de upselling (respuesta afirmativa)
+            aceptaUpsell: transcripcionLower.includes('sí') || transcripcionLower.includes('claro') || transcripcionLower.includes('algo más')
         };
     }
 }
