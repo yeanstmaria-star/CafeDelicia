@@ -108,9 +108,24 @@ class AsistenteIA {
             });
 
             const resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!resultText) throw new Error("Respuesta JSON vacía o inválida de la IA.");
+            
+            if (!resultText) {
+                // Maneja el caso de respuesta vacía o con estructura inesperada
+                console.error("[ERROR GEMINI] Respuesta de texto vacía o sin candidatos.");
+                throw new Error("Respuesta JSON vacía o inválida de la IA.");
+            }
 
-            const aiResponse = JSON.parse(resultText);
+            let aiResponse;
+            // Bloque anidado para manejar el error de JSON.parse, que es propenso a fallar.
+            try {
+                aiResponse = JSON.parse(resultText);
+            } catch (parseError) {
+                // Si el parsing falla, registra el texto que causó el problema
+                console.error(`[ERROR GEMINI] Fallo al parsear JSON. Texto recibido: ${resultText.substring(0, 200)}...`);
+                // Relanza un error general para ser capturado por el bloque exterior
+                throw new Error("La IA no devolvió un JSON válido.");
+            }
+
 
             // Actualizar el estado de la aplicación con la respuesta de la IA
             const nuevoEstado = {
@@ -128,8 +143,10 @@ class AsistenteIA {
             };
 
         } catch (error) {
+            // Este bloque atrapa fallos de Axios (timeouts/red) y errores de JSON/texto fallidos
             console.error("[ERROR GEMINI] Fallo en la llamada a la IA:", error.response?.data || error.message);
             // Fallback en caso de error de la IA
+            // Devolver un objeto válido asegura que el servidor Express siempre pueda responder con TwiML
             return {
                 mensaje: "Lo siento, mi conexión con la cocina está fallando. ¿Podrías repetir tu pedido por favor?",
                 estadoActualizado: estadoActual
