@@ -18,6 +18,7 @@ class Database {
 
     /**
      * Verifica y crea las tablas 'menu' y 'ordenes' si no existen.
+     * Si la tabla 'ordenes' existe pero le falta la columna 'items' (error común), la añade.
      */
     async verificarTablas() {
         console.log("Verificando/creando tablas de la base de datos...");
@@ -34,7 +35,6 @@ class Database {
             `;
             
             // 2. Tabla de Órdenes
-            // El campo 'items' es JSONB para almacenar los detalles del pedido de la IA.
             const createOrdersTable = `
                 CREATE TABLE IF NOT EXISTS ordenes (
                     id SERIAL PRIMARY KEY,
@@ -46,10 +46,25 @@ class Database {
                 );
             `;
             
-            // Ejecutar la creación de tablas
             await this.pool.query(createMenuTable);
             await this.pool.query(createOrdersTable);
 
+            // CORRECCIÓN PERMANENTE: Si la tabla ya existía sin la columna 'items', la añadimos.
+            const addItemsColumn = `
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 
+                        FROM information_schema.columns 
+                        WHERE table_name='ordenes' AND column_name='items'
+                    ) THEN
+                        ALTER TABLE ordenes ADD COLUMN items JSONB;
+                    END IF;
+                END
+                $$;
+            `;
+            await this.pool.query(addItemsColumn);
+            
             // Insertar datos de menú si la tabla está vacía
             const { rowCount } = await this.pool.query('SELECT 1 FROM menu LIMIT 1');
             if (rowCount === 0) {
@@ -75,6 +90,20 @@ class Database {
             throw error;
         }
     }
+    
+    // Método temporal para forzar la eliminación y recreación de tablas
+    async eliminarYRecrearTablas() {
+        console.log("--- ATENCIÓN: Eliminando y recreando tablas para corregir la estructura. ---");
+        try {
+            await this.pool.query('DROP TABLE IF EXISTS ordenes CASCADE;');
+            await this.pool.query('DROP TABLE IF EXISTS menu CASCADE;');
+            await this.verificarTablas();
+            console.log("--- Estructura de tablas corregida. ---");
+        } catch (error) {
+            console.error("Error al eliminar y recrear tablas:", error);
+            throw error;
+        }
+    }
 
     /**
      * Obtiene todos los productos del menú.
@@ -88,15 +117,17 @@ class Database {
      * Agrega una nueva orden a la tabla 'ordenes'.
      */
     async agregarOrden(items, telefono, transcripcion) {
-        // Asumiendo que 'items' ya tiene el formato JSON listo
+        // Aseguramos que items se serialice como string JSON antes de insertarlo en el campo JSONB
+        const itemsJson = JSON.stringify(items); 
         const res = await this.pool.query(
             'INSERT INTO ordenes (items, telefono, transcripcion) VALUES ($1, $2, $3) RETURNING *',
-            [items, telefono, transcripcion]
+            [itemsJson, telefono, transcripcion]
         );
-        // NOTA: Aquí se deberían enriquecer los items con el área_preparacion consultando la BD.
-        // Por simplicidad, asumimos que los items devueltos por la IA son solo nombres.
-        // Modificamos el item devuelto para que 'server.js' pueda procesar las notificaciones.
+        
+        // El campo 'items' se devuelve como objeto/array JSON, lo parseamos antes de devolver
         const order = res.rows[0];
+        
+        // Modificamos el item devuelto para que 'server.js' pueda procesar las notificaciones.
         const menu = await this.obtenerMenu();
         
         // Adjuntar el área de preparación a los items de la orden
