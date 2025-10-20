@@ -1,28 +1,33 @@
 // Archivo: server.js
 // Servidor Express completo para el sistema de órdenes por voz.
-// Utiliza dependencias reales (dotenv, pg, axios, twilio) importadas como módulos.
+// Implementa conversación multi-turno con Twilio TwiML y manejo de estado.
 
 // --- 1. SETUP INICIAL ---
-require('dotenv').config(); // Cargar variables de entorno desde .env
+require('dotenv').config(); 
 const express = require('express');
 const bodyParser = require('body-parser');
 const twilio = require('twilio'); 
+// No se necesita 'crypto' si usamos CallSid de Twilio como ID de estado.
 
-// Importar clases reales (asumiendo que están en la misma carpeta)
 const Database = require('./Database');
 const AsistenteIA = require('./AsistenteIA');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Variables de entorno requeridas
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY; // Clave de seguridad para admin
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+// Constantes de configuración (obtenidas de variables de entorno)
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+// Las credenciales de Twilio no son necesarias para el runtime de Twilio, 
+// pero se incluyen como recordatorio si se quisiera usar la API REST de Twilio.
+// const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+// const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
-// Inicialización de dependencias
-const db = new Database(); // Conexión a PostgreSQL
-const asistenteIA = new AsistenteIA(); // Conexión a Gemini API
+const db = new Database(); 
+const asistenteIA = new AsistenteIA(); 
+
+// Almacenamiento temporal para el estado de la conversación.
+// Esto permite que el estado persista entre las múltiples peticiones de Twilio para la misma llamada (CallSid).
+const conversationState = {}; 
 
 // --- 2. MIDDLEWARES GENERALES Y SEGURIDAD ---
 
@@ -31,7 +36,10 @@ app.use(bodyParser.json());
 
 // Middleware de Logging
 app.use((req, res, next) => {
-    console.log(`[LOG] ${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+    // Excluir logs de rutas de prueba o admin para mantener limpio el registro
+    if (!req.originalUrl.includes('/admin') && !req.originalUrl.includes('/ordenes-activas')) {
+        console.log(`[LOG] ${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+    }
     next();
 });
 
@@ -41,47 +49,71 @@ function protegerRuta(req, res, next) {
     if (apiKey && apiKey === ADMIN_API_KEY) {
         return next();
     }
-    // Si la clave es incorrecta o falta
     res.status(401).json({ error: 'No autorizado. Se requiere un encabezado X-API-Key válido.' });
 }
 
-// Lógica de notificación (Simulada, pero usaría Twilio para SMS/WhatsApp)
+// Lógica de notificación (Simulada para el log)
 async function enviarNotificacion(area, orden) {
-    // CORRECCIÓN DE SEGURIDAD: Asegurar que items sea un array antes de usar .map
     const items = orden.items || []; 
-    console.log(`[NOTIFICACIÓN ${area.toUpperCase()}] Nueva orden #${orden.id} recibida.`);
-    console.log(`Detalles: ${items.map(i => i.nombre).join(', ')}`);
-    // Aquí iría el código real para enviar un SMS a la Cocina/Barra vía Twilio
+    console.log(`[NOTIFICACIÓN ${area.toUpperCase()}] Nueva orden #${orden.id} recibida. Área: ${area}`);
+    console.log(`Detalles: ${items.map(i => i.nombre).join(' | ')}`);
 }
 
-// Procesa la orden y llama a notificar usando el campo 'area_preparacion'
 function procesarNotificaciones(orden) {
-    // CORRECCIÓN DE ERROR: Asegurar que orden.items es un array (o vacío) antes de llamar a reduce.
     const itemsSeguros = orden.items || []; 
     
-    const itemsPorArea = itemsSeguros.reduce((acc, item) => { // Línea 162
-        // Agrupa los items por su área de preparación definida en la BD
-        const area = item.area_preparacion || 'general';
+    // Agrupa items para notificación (barra o cocina)
+    const itemsPorArea = itemsSeguros.reduce((acc, item) => {
+        // Usa el área definida en AsistenteIA.js
+        const area = item.area_preparacion || 'general'; 
         acc[area] = acc[area] || [];
         acc[area].push(item);
         return acc;
     }, {});
 
     for (const area in itemsPorArea) {
-        // Llama a la función de notificación para cada área
         enviarNotificacion(area, { ...orden, items: itemsPorArea[area] });
     }
 }
 
-// --- 3. RUTAS DE LA APLICACIÓN ---
+// --- 3. FUNCIONES DE GESTIÓN DE ESTADO ---
+
+function createInitialState(caller, callSid) {
+    const defaultState = {
+        caller: caller,
+        callSid: callSid,
+        items: [],
+        personalizaciones: [],
+        total: 0.00,
+        stage: 'INITIAL_ORDER',
+        nombreCliente: 'Cliente Anónimo',
+        telefonoCliente: caller, // Usamos el CallerID de Twilio por defecto
+    };
+    conversationState[callSid] = defaultState;
+    return defaultState;
+}
+
+function updateState(callSid, updates) {
+    if (conversationState[callSid]) {
+        conversationState[callSid] = { ...conversationState[callSid], ...updates };
+        return conversationState[callSid];
+    }
+    return null;
+}
+
+function deleteState(callSid) {
+    console.log(`[ESTADO] Eliminando estado de conversación para CallSid: ${callSid}`);
+    delete conversationState[callSid];
+}
+
+// --- 4. RUTAS DE LA APLICACIÓN (FRONTEND) ---
 
 // Ruta Principal (Muestra el menú real de la BD)
 app.get('/', async (req, res, next) => {
     try {
         const menu = await db.obtenerMenu();
-        
         const menuHTML = menu.map(p => 
-            `<li>${p.nombre} (<span class="font-semibold">${p.area_preparacion.toUpperCase()}</span>)</li>`
+            `<li>${p.nombre} (<span class="font-semibold">${p.area_preparacion.toUpperCase()}</span>) - $${p.precio.toFixed(2)}</li>`
         ).join('');
 
         const html = `
@@ -96,14 +128,16 @@ app.get('/', async (req, res, next) => {
             <body class="bg-gray-50 p-8 font-sans">
                 <div class="max-w-xl mx-auto bg-white p-6 rounded-xl shadow-2xl">
                     <h1 class="text-3xl font-bold text-indigo-600 mb-4 border-b pb-2">Sistema de Pedidos por Voz</h1>
-                    <p class="text-gray-600 mb-6">El backend está operativo y conectado a PostgreSQL. Menú:</p>
+                    <p class="text-gray-600 mb-6">El backend está operativo y conectado a PostgreSQL. El asistente ahora mantiene una **conversación interactiva**.</p>
                     
                     <div class="mb-6 border p-4 rounded-lg bg-gray-50">
                         <h2 class="text-xl font-semibold text-gray-800 mb-3">Menú (Base de Datos)</h2>
                         <ul class="list-disc list-inside text-gray-700 space-y-1">${menuHTML}</ul>
                     </div>
                     
-                    <div class="p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 rounded-lg">
+                    <div class="p-4 bg-green-100 border-l-4 border-green-500 text-green-700 rounded-lg">
+                        <p><strong>ESTADO: CONVERSACIÓN MULTI-TURNO HABILITADA</strong></p>
+                        <p>Llama al número Twilio. La asistente esperará tu respuesta en cada paso.</p>
                         <p><strong>Ruta de Twilio:</strong> <code>/twilio-voice</code></p>
                         <p><strong>Panel Admin:</strong> <a href="/admin" class="text-indigo-600 hover:underline">/admin</a></p>
                     </div>
@@ -127,57 +161,89 @@ app.get('/ordenes-activas', async (req, res, next) => {
     }
 });
 
-// Ruta para procesar la llamada de Twilio (Voice URL)
+// --- 5. RUTAS DEL FLUJO CONVERSACIONAL DE TWILIO (TwiML) ---
+
+// 5.1. RUTA INICIAL: /twilio-voice (Llamada entrante)
 app.post('/twilio-voice', async (req, res) => {
+    const { Caller, CallSid } = req.body;
     const VoiceResponse = twilio.twiml.VoiceResponse;
     const twiml = new VoiceResponse();
     
-    twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Hola. Gracias por llamar. Por favor, diga su pedido ahora.');
+    // Inicializa el estado de la conversación para esta llamada
+    createInitialState(Caller, CallSid);
+
+    twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¡Hola! Bienvenido a Cafe Delicia. ¿Qué te gustaría ordenar hoy?');
     
-    // Twilio Gather para capturar la voz
+    // Pasa a la primera fase de procesamiento (Orden Base)
     twiml.gather({
         input: 'speech',
-        action: '/twilio-process', // La acción que se llama después de la transcripción
+        action: '/twilio-process-order-base',
         method: 'POST',
-        timeout: 3,
+        timeout: 4,
         language: 'es-MX'
     });
 
-    twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Lo siento, no pude escuchar su orden. Por favor, llame de nuevo.');
     res.type('text/xml');
     res.send(twiml.toString());
 });
 
-// Ruta para procesar la transcripción de voz de Twilio
-app.post('/twilio-process', async (req, res, next) => {
+// 5.2. FASE 1: /twilio-process-order-base (Recibe el pedido inicial)
+app.post('/twilio-process-order-base', async (req, res, next) => {
+    const { SpeechResult, CallSid } = req.body;
     const VoiceResponse = twilio.twiml.VoiceResponse;
     const twiml = new VoiceResponse();
-    const { SpeechResult, Caller } = req.body;
-    
+    let state = conversationState[CallSid];
+
+    if (!state || !SpeechResult) {
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'No pude escuchar su orden. Por favor, llame de nuevo.');
+        // No borramos el estado aquí, dejamos que expire o se sobreescriba.
+        res.type('text/xml');
+        return res.send(twiml.toString());
+    }
+
     try {
-        if (SpeechResult) {
-            const transcripcion = SpeechResult;
-            // Obtener el menú real de la BD para dar contexto a la IA
-            const menuItems = (await db.obtenerMenu()).map(p => p.nombre);
+        const iaResultado = await asistenteIA.identificarItems(SpeechResult);
 
-            // 1. Procesar la voz con la IA real (AsistenteIA.js)
-            const iaResultado = await asistenteIA.procesarOrden(transcripcion, menuItems);
+        if (iaResultado.items.length === 0) {
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Lo siento, no pude identificar ningún producto en el menú. Por favor, intente de nuevo.');
+            twiml.redirect({ method: 'POST' }, '/twilio-voice'); 
+            res.type('text/xml');
+            return res.send(twiml.toString());
+        }
 
-            if (iaResultado.items && iaResultado.items.length > 0) {
-                // 2. Almacenar la orden en la BD real
-                const nuevaOrden = await db.agregarOrden(iaResultado.items, Caller, transcripcion);
-                
-                // 3. Notificar a las áreas de preparación (Cocina/Barra)
-                procesarNotificaciones(nuevaOrden);
-
-                // 4. Responder al cliente
-                twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `${iaResultado.mensajeRespuesta} Su orden ha sido registrada con el número ${nuevaOrden.id}. Gracias.`);
-            } else {
-                 // Si la IA no identificó items o iaResultado.items es nulo
-                 twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `${iaResultado.mensajeRespuesta}`);
-            }
+        // 1. Actualiza el estado con los items base
+        // NOTA: Reiniciamos personalizaciones y total, ya que este es el punto de partida.
+        state = updateState(CallSid, { 
+            items: iaResultado.items, 
+            personalizaciones: iaResultado.personalizaciones,
+            total: iaResultado.totalInicial,
+            stage: 'CUSTOMIZATION'
+        });
+        
+        const tieneItemDeBarra = state.items.some(item => item.area_preparacion === 'barra');
+        
+        // 2. Transición a la siguiente fase: Customización o Upselling
+        if (tieneItemDeBarra) {
+            const primerItem = state.items.find(item => item.area_preparacion === 'barra').nombre;
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `¡Excelente! Un ${primerItem} anotado. ¿Te gustaría agregar un shot extra de espresso o cambiar la leche por alguna alternativa como almendra o avena?`);
+            
+            twiml.gather({
+                input: 'speech',
+                action: '/twilio-process-customizations',
+                method: 'POST',
+                timeout: 3,
+                language: 'es-MX'
+            });
         } else {
-            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'No recibí ninguna orden de voz. Por favor, llame de nuevo y hable claramente.');
+            // Si no hay café, saltamos directamente al Upselling
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¡Perfecto! Un ' + iaResultado.items.map(i => i.nombre).join(' y un ') + ' anotado. ¿Quieres agregar algo más, como una bebida o pan dulce, para acompañar?');
+            twiml.gather({
+                input: 'speech',
+                action: '/twilio-process-upsell',
+                method: 'POST',
+                timeout: 3,
+                language: 'es-MX'
+            });
         }
 
         res.type('text/xml');
@@ -187,7 +253,211 @@ app.post('/twilio-process', async (req, res, next) => {
     }
 });
 
-// --- 4. RUTAS DEL PANEL DE ADMINISTRACIÓN (PROTEGIDAS) ---
+// 5.3. FASE 2: /twilio-process-customizations (Recibe la respuesta de personalización)
+app.post('/twilio-process-customizations', async (req, res, next) => {
+    const { SpeechResult, CallSid } = req.body;
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    let state = conversationState[CallSid];
+    
+    if (!state) {
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Hubo un error en su conexión. Por favor, llame de nuevo.');
+        res.type('text/xml');
+        return res.send(twiml.toString());
+    }
+
+    try {
+        let mensajeBarista = 'Entendido.';
+        if (SpeechResult) {
+             const iaResultado = await asistenteIA.identificarItems(SpeechResult);
+             
+             // Agregamos personalizaciones si las identificó y recalculamos el total
+             if (iaResultado.personalizaciones.length > 0) {
+                 const newCustoms = iaResultado.personalizaciones;
+                 // Asumimos que la personalización es un costo fijo (0.75) por tipo, no por cantidad.
+                 const newTotal = state.total + newCustoms.length * 0.75; 
+                 
+                 // Actualizamos el estado con las personalizaciones y el nuevo total
+                 updateState(CallSid, { 
+                     personalizaciones: [...state.personalizaciones, ...newCustoms], 
+                     total: newTotal,
+                     stage: 'UPSELL'
+                 });
+                 mensajeBarista = `¡Anotado! ${newCustoms.map(c => c.name).join(' y ')} añadido.`;
+             } else if (SpeechResult.toLowerCase().includes('no')) {
+                 mensajeBarista = 'Perfecto, sin extras entonces.';
+             }
+        } else {
+             mensajeBarista = 'Continuamos.';
+        }
+
+        // Transición a la siguiente fase: Upselling
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, mensajeBarista);
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¿Quieres agregar algo más a tu orden, como un pan dulce o un sándwich, para acompañar?');
+        
+        twiml.gather({
+            input: 'speech',
+            action: '/twilio-process-upsell',
+            method: 'POST',
+            timeout: 3,
+            language: 'es-MX'
+        });
+
+        res.type('text/xml');
+        res.send(twiml.toString());
+    } catch (error) {
+        next(error);
+    }
+});
+
+// 5.4. FASE 3: /twilio-process-upsell (Recibe la respuesta de upselling/adicionales)
+app.post('/twilio-process-upsell', async (req, res, next) => {
+    const { SpeechResult, CallSid } = req.body;
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    let state = conversationState[CallSid];
+
+    if (!state) {
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Hubo un error en su conexión. Por favor, llame de nuevo.');
+        res.type('text/xml');
+        return res.send(twiml.toString());
+    }
+
+    try {
+        if (SpeechResult) {
+            const iaResultado = await asistenteIA.identificarItems(SpeechResult);
+
+            // Revisa si aceptó un upselling o añadió nuevos items
+            if (iaResultado.items.length > 0 || iaResultado.aceptaUpsell) {
+                
+                let nuevosItems = [];
+                let mensajeAdicional = '';
+
+                // Si identificó nuevos items que no estaban en la orden (solo se considera el upselling como un nuevo item)
+                if (iaResultado.items.length > 0) {
+                    nuevosItems = iaResultado.items.filter(newItem => 
+                        !state.items.some(existingItem => existingItem.nombre === newItem.nombre)
+                    );
+
+                    if (nuevosItems.length > 0) {
+                        const newTotal = state.total + nuevosItems.reduce((sum, item) => sum + item.precio, 0);
+                        
+                        updateState(CallSid, { 
+                            items: [...state.items, ...nuevosItems], 
+                            total: newTotal,
+                            stage: 'PAYMENT'
+                        });
+                        mensajeAdicional = `¡Genial! Añadido ${nuevosItems.map(i => i.nombre).join(' y ')}.`;
+                    }
+                } else if (iaResultado.aceptaUpsell) {
+                     // Si solo dijo "sí", respondemos positivamente pero no añadimos nada a la BD (ya que no dijo qué).
+                     mensajeAdicional = '¡Perfecto! Agrega lo que quieras a tu orden inicial.';
+                } else {
+                     mensajeAdicional = 'De acuerdo, mantendremos su orden como está.';
+                }
+                
+                twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, mensajeAdicional);
+
+            } else {
+                twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'De acuerdo, no hay problema.');
+            }
+        } else {
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Continuamos con su orden inicial.');
+        }
+
+        // 1. Resumen final (se actualiza el estado por si hubo upselling)
+        state = conversationState[CallSid]; // Re-leer el estado actualizado
+        let itemSummary = state.items.map(item => item.nombre).join(' y ');
+        if (state.personalizaciones.length > 0) {
+            itemSummary += ` con ${state.personalizaciones.map(c => c.name).join(', ')}.`;
+        }
+        
+        const totalFormat = state.total.toFixed(2);
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `Muy bien. Su pedido es: ${itemSummary}. El total es de $${totalFormat}.`);
+        
+        // 2. Pregunta de Pago
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¿Prefieres pagar ahora por teléfono o cuando llegues a la cafetería?');
+        twiml.gather({
+            input: 'speech',
+            action: '/twilio-process-payment',
+            method: 'POST',
+            timeout: 3,
+            language: 'es-MX'
+        });
+
+        res.type('text/xml');
+        res.send(twiml.toString());
+    } catch (error) {
+        next(error);
+    }
+});
+
+// 5.5. FASE 4: /twilio-process-payment (Recibe la preferencia de pago)
+app.post('/twilio-process-payment', async (req, res, next) => {
+    const { SpeechResult, CallSid } = req.body;
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    let state = conversationState[CallSid];
+
+    if (!state) {
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Hubo un error en su conexión. Por favor, llame de nuevo.');
+        res.type('text/xml');
+        return res.send(twiml.toString());
+    }
+
+    try {
+        const iaResultado = await asistenteIA.identificarItems(SpeechResult || "");
+        
+        // 1. Manejo de Pago
+        if (iaResultado.pagoAhora) {
+            // Si el cliente dijo 'ahora' o 'teléfono'
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¡Excelente! Puede pagar con tarjeta al llegar a la cafetería.');
+        } else {
+            // Pago al llegar
+            twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, '¡Excelente! Entonces, pagas al llegar. Para registrar tu pedido, ¿podrías decirme tu nombre completo y número de teléfono?');
+        }
+
+        // 2. Finalización y Almacenamiento de la orden
+        
+        // Preparamos los items para la BD (combinando base + personalizaciones)
+        const finalItems = state.items.map(item => {
+            const isBarItem = item.area_preparacion === 'barra';
+            let name = item.nombre;
+            if (isBarItem && state.personalizaciones.length > 0) {
+                 name += ` (${state.personalizaciones.map(c => c.name).join(', ')})`;
+            }
+            return {
+                nombre: name,
+                area_preparacion: item.area_preparacion,
+                precio: item.precio // El precio individual es el base. El total es el que importa.
+            };
+        });
+        
+        const transcripcionFinal = `Pedido de ${state.caller} (Total: $${state.total.toFixed(2)}). Items: ${finalItems.map(i => i.nombre).join(', ')}.`;
+        
+        // Usamos el número de Twilio si no se especificó un número en esta fase (SpeechResult)
+        const numeroCliente = state.telefonoCliente; 
+
+        // Generamos la orden en la BD
+        const nuevaOrden = await db.agregarOrden(finalItems, numeroCliente, transcripcionFinal);
+        
+        // 3. Notificar a las áreas
+        procesarNotificaciones(nuevaOrden);
+
+        // 4. Respuesta final y despedida
+        twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, `Su orden ha sido registrada con el número ${nuevaOrden.id}. Estará lista en breve. ¡Te esperamos en Cafe Delicia!`);
+        
+        // 5. Limpiamos el estado al finalizar
+        deleteState(CallSid);
+
+        res.type('text/xml');
+        res.send(twiml.toString());
+    } catch (error) {
+        next(error);
+    }
+});
+
+// --- 6. RUTAS DEL PANEL DE ADMINISTRACIÓN (PROTEGIDAS) ---
 
 // Ruta protegida para actualizar el estado de una orden
 app.put('/ordenes/:id/estado', protegerRuta, async (req, res, next) => {
@@ -257,7 +527,6 @@ app.get('/admin', async (req, res) => {
                     const alertDiv = document.createElement('div');
                     alertDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
                     
-                    // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
                     alertDiv.innerHTML = '<div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">' +
                                          '<h3 class="text-xl font-bold mb-3 text-red-600">Alerta</h3>' +
                                          '<p class="text-gray-700 mb-4">' + message + '</p>' +
@@ -270,30 +539,32 @@ app.get('/admin', async (req, res) => {
 
                 async function updateStatus(orderId, newStatus) {
                     const statusMap = {
-                        'recibida': 'A Preparación',
-                        'en_preparacion': 'Lista para Servir',
-                        'lista_para_servir': 'Completada',
-                        'completada': 'Completada'
+                        'recibida': 'en_preparacion',
+                        'en_preparacion': 'lista_para_servir',
+                        'lista_para_servir': 'completada',
+                        // Si ya está completada, la siguiente acción es solo completada.
+                        'completada': 'completada' 
                     };
                     
-                    // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
-                    if (!confirm('¿Estás seguro de cambiar la orden #' + orderId + ' a "' + statusMap[newStatus] + '"?')) return;
+                    const nextStatus = statusMap[newStatus];
+                    if (!nextStatus || newStatus === 'completada') return;
+
+                    showCustomAlert('La funcionalidad de confirmación necesita una implementación modal. Continuaremos con la acción para debug. Orden #' + orderId + ' a "' + nextStatus.toUpperCase().replace('_', ' ') + '".');
 
                     try {
-                        // CORRECCIÓN: Usando concatenación estándar en lugar de template literals anidados
                         const response = await fetch(API_BASE_URL + '/ordenes/' + orderId + '/estado', {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-API-Key': ADMIN_API_KEY // Uso de la clave de seguridad para la ruta protegida
+                                'X-API-Key': ADMIN_API_KEY
                             },
-                            body: JSON.stringify({ estado: newStatus })
+                            body: JSON.stringify({ estado: nextStatus })
                         });
 
                         const result = await response.json();
                         if (response.ok) {
                             console.log(result.message);
-                            fetchOrders(); // Refrescar la lista después de la actualización
+                            fetchOrders();
                         } else {
                             console.error('Error al actualizar:', result.error);
                             showCustomAlert('Error al actualizar el estado: ' + (result.error || 'Fallo de autenticación.'));
@@ -323,11 +594,24 @@ app.get('/admin', async (req, res) => {
                         const card = document.createElement('div');
                         card.className = 'bg-white p-6 rounded-xl shadow-lg border-t-4 border-indigo-400 hover:shadow-xl transition duration-300';
                         
-                        // CORRECCIÓN: Usando concatenación estándar para el HTML para evitar SyntaxError
                         const statusClass = getStatusColor(order.estado);
                         const isRecibida = order.estado === 'recibida';
                         const isEnPreparacion = order.estado === 'en_preparacion';
+                        const isLista = order.estado === 'lista_para_servir';
                         const isCompletada = order.estado === 'completada';
+                        
+                        // Determinar el texto del botón de acción
+                        let nextButtonText = 'A Preparación';
+                        if (isEnPreparacion) nextButtonText = 'Lista para Servir';
+                        if (isLista) nextButtonText = 'Completada';
+                        if (isCompletada) nextButtonText = 'Completada (Finalizado)';
+                        
+                        // Determinar la clase del botón de acción
+                        let nextButtonColor = 'bg-blue-500 hover:bg-blue-600';
+                        if (isEnPreparacion) nextButtonColor = 'bg-yellow-500 hover:bg-yellow-600';
+                        if (isLista) nextButtonColor = 'bg-green-500 hover:bg-green-600';
+                        if (isCompletada) nextButtonColor = 'bg-gray-400 cursor-not-allowed';
+
 
                         card.innerHTML = '<div class="flex justify-between items-start mb-3">' +
                                          '<h3 class="text-2xl font-bold text-gray-900">#' + order.id + '</h3>' +
@@ -338,24 +622,14 @@ app.get('/admin', async (req, res) => {
                                          '<p class="text-sm text-gray-500 mb-2">Hora: ' + date + ' | Teléfono: ' + order.telefono + '</p>' +
                                          '<p class="mb-4 text-gray-700 italic border-l-4 pl-3 border-gray-200">"' + order.transcripcion + '"</p>' +
                                          '<div class="space-y-2 pt-4 border-t border-gray-100">' +
-                                         '<p class="font-semibold text-gray-800">Cambiar Estado:</p>' +
+                                         '<p class="font-semibold text-gray-800">Acción:</p>' +
                                          
-                                         '<button onclick="updateStatus(' + order.id + ', \'en_preparacion\')" ' +
-                                         'class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ' + (isRecibida ? '' : 'opacity-50 cursor-not-allowed') + '" ' +
-                                         (isRecibida ? '' : 'disabled') + '>' +
-                                         'A Preparación' +
+                                         '<button onclick="updateStatus(' + order.id + ', \'' + order.estado + '\')" ' +
+                                         'class="w-full text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ' + nextButtonColor + (isCompletada ? ' opacity-50' : '') + '" ' +
+                                         (isCompletada ? 'disabled' : '') + '>' +
+                                         nextButtonText +
                                          '</button>' +
                                          
-                                         '<button onclick="updateStatus(' + order.id + ', \'lista_para_servir\')" ' +
-                                         'class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md ' + (isEnPreparacion ? '' : 'opacity-50 cursor-not-allowed') + '" ' +
-                                         (isEnPreparacion ? '' : 'disabled') + '>' +
-                                         'Lista para Servir' +
-                                         '</button>' +
-                                         
-                                         '<button onclick="updateStatus(' + order.id + ', \'completada\')" ' +
-                                         'class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 rounded-lg transition duration-150 shadow-md">' +
-                                         'Completada' +
-                                         '</button>' +
                                          '</div>';
 
                         list.appendChild(card);
@@ -365,7 +639,6 @@ app.get('/admin', async (req, res) => {
                 async function fetchOrders() {
                     document.getElementById('loader').classList.remove('hidden');
                     try {
-                        // CORRECCIÓN DE SINTAXIS: Usando concatenación de cadenas en lugar de template literal anidado
                         const response = await fetch(API_BASE_URL + '/ordenes-activas');
                         const orders = await response.json();
                         renderOrders(orders);
@@ -386,9 +659,7 @@ app.get('/admin', async (req, res) => {
     res.send(html);
 });
 
-// --- 5. MANEJADOR DE ERRORES GLOBAL ---
-// Centraliza el manejo de fallos para toda la aplicación
-
+// --- 7. MANEJADOR DE ERRORES GLOBAL ---
 app.use((error, req, res, next) => {
     console.error('[ERROR GLOBAL]', error);
     if (res.headersSent) {
@@ -398,7 +669,10 @@ app.use((error, req, res, next) => {
     if (req.originalUrl.includes('twilio')) {
         const VoiceResponse = twilio.twiml.VoiceResponse;
         const twiml = new VoiceResponse();
+        // Intentamos limpiar el estado de la llamada que falló
+        if (req.body.CallSid) { deleteState(req.body.CallSid); } 
         twiml.say({ language: 'es-MX', voice: 'Polly.Lupe' }, 'Lo sentimos, ha ocurrido un error grave en el sistema. Por favor, inténtelo de nuevo más tarde.');
+        twiml.hangup();
         res.type('text/xml');
         return res.status(500).send(twiml.toString());
     }
@@ -411,9 +685,8 @@ app.use((error, req, res, next) => {
 });
 
 // Inicialización del Servidor
-// Nota: La verificación de tablas debe ejecutarse una vez antes de escuchar
 db.verificarTablas().then(() => {
-    console.log("Tablas verificadas exitosamente.");
+    console.log("Inicialización segura exitosa. Servidor listo.");
     app.listen(PORT, () => {
         console.log(`Servidor Express escuchando en el puerto ${PORT}`);
         console.log(`URL Local: http://localhost:${PORT}`);
