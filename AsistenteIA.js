@@ -143,7 +143,9 @@ class AsistenteIA {
                 stage: aiResponse.next_stage,
                 items: aiResponse.items_update || [],
                 nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
-                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente,
+                // INICIO DE LA CORRECCIÓN: Aseguramos que telefonoCliente use el 'caller' de Twilio como fallback
+                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente || estadoActual.caller,
+                // FIN DE LA CORRECCIÓN
                 // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
             };
             
