@@ -147,9 +147,11 @@ class AsistenteIA {
                 // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
             };
             
-            // --- NUEVO LOG DE DIAGNÓSTICO ---
+            // --- LOGS DE DIAGNÓSTICO FINALES (NUEVO) ---
             console.log(`[DIAGNÓSTICO] Respuesta exitosa de la IA. Nuevo estado: ${nuevoEstado.stage}`);
-            // ---------------------------------
+            // Este log muestra el objeto de retorno completo para verificar el payload en server.js
+            console.log(`[DIAGNÓSTICO] PAYLOAD RETORNADO AL SERVIDOR: ${JSON.stringify({ mensaje: aiResponse.llm_response_text, estadoActualizado: nuevoEstado })}`);
+            // ------------------------------------------
 
             return {
                 mensaje: aiResponse.llm_response_text,
