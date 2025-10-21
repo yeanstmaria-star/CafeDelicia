@@ -1,19 +1,19 @@
 // Archivo: AsistenteIA.js
-// VERSIÓN DE PRODUCCIÓN - URL DE API CORREGIDA
-// Se corrigió el error de tipeo en la constante API_URL.
+// VERSIÓN DE PRODUCCIÓN - OPTIMIZADA PARA LATENCIA DE TWILIO
+// Se ajustaron los reintentos y el timeout para evitar que Twilio cuelgue la llamada.
 
 const axios = require('axios');
 
 // Configuración de la API (tomada de .env)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// --- CORRECCIÓN CRÍTICA ---
-// Se corrigió "generativelabnguage" a "generativelanguage"
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
-// -------------------------
 
-// Configuración de reintentos
-const MAX_RETRIES = 3;
+// --- OPTIMIZACIÓN DE LATENCIA ---
+// Se reduce el número de reintentos y el timeout para asegurar una respuesta
+// dentro del límite de tiempo de Twilio (aprox. 15 segundos).
+const MAX_RETRIES = 2; // Reducido de 3 a 2
 const INITIAL_DELAY_MS = 1000;
+// -----------------------------
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const PRECIOS_EXTRAS = {
@@ -101,7 +101,10 @@ class AsistenteIA {
         try {
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const response = await axios.post(API_URL, payload, { timeout: 15000 });
+                    // --- OPTIMIZACIÓN DE LATENCIA ---
+                    // Se reduce el timeout de la llamada a 6 segundos.
+                    const response = await axios.post(API_URL, payload, { timeout: 6000 });
+                    // -----------------------------
                     resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (resultText) break;
                     throw new Error("EMPTY_TEXT_RESPONSE");
