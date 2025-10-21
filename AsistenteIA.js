@@ -87,6 +87,7 @@ class AsistenteIA {
             Tu respuesta de texto NO DEBE EXCEDER 15 PALABRAS.
             Analiza la transcripción del cliente, considera el estado actual de la orden y usa la herramienta 'actualizar_estado_orden' para devolver el nuevo estado y tu respuesta.
             REGLA IMPORTANTE: Si el cliente confirma la orden pero el nombre del cliente es 'Cliente Anónimo', tu 'next_stage' DEBE ser 'IDENTIFICATION' para pedir el nombre. NO pases a 'FINALIZED' sin un nombre.
+            REGLA DE CONTEXTO: Si el cliente hace una pregunta (ej. 'qué más tienes') en una etapa avanzada (como CONFIRMATION), responde la pregunta y cambia el 'next_stage' a 'UPSELL_FINAL' para que puedan añadir más cosas. NO reinicies la orden a 'INITIAL_ORDER'.
         `;
         const user_prompt = `
             MENÚ DISPONIBLE: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
