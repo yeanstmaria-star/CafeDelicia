@@ -9,6 +9,14 @@ const axios = require('axios'); // Ya incluido en package.json
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
 
+// --- CONFIGURACIÓN DE REINTENTO Y BACKOFF EXPONENCIAL ---
+const MAX_RETRIES = 3;
+const INITIAL_DELAY_MS = 1000; // 1 segundo (mínimo)
+
+// Función de utilidad para retrasar la ejecución
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// ---------------------------------------------------------
+
 
 class AsistenteIA {
     constructor() {
@@ -112,19 +120,53 @@ class AsistenteIA {
             }
         };
 
-        try {
-            // Llama a la API de Gemini
-            const response = await axios.post(API_URL, payload, {
-                headers: { 'Content-Type': 'application/json' }
-            });
+        let resultText = null;
 
-            const resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            
-            if (!resultText) {
-                // Maneja el caso de respuesta vacía o con estructura inesperada
-                console.error("[ERROR GEMINI] Respuesta de texto vacía o sin candidatos.");
-                throw new Error("API_RESPONSE_EMPTY");
+        try {
+            // --- INICIO: LÓGICA DE REINTENTO CON BACKOFF EXPONENCIAL (Corrección para 503) ---
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    // 1. Intento de llamada a la API
+                    const response = await axios.post(API_URL, payload, {
+                        headers: { 'Content-Type': 'application/json' },
+                        // Añadimos un timeout razonable para fallar rápido si la API no responde
+                        timeout: 15000 
+                    });
+                    
+                    // Si es exitoso, almacenamos el texto y salimos del bucle.
+                    resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (resultText) {
+                        break; // Éxito, salir del bucle de reintento
+                    } else {
+                        // Si no hay texto, forzamos un reintento si no es el último intento
+                        throw new Error("EMPTY_TEXT_RESPONSE");
+                    }
+
+                } catch (error) {
+                    const status = error.response?.status;
+                    // Errores reintentables: 429 (Rate Limit), 500 (Server Error), 503 (Overloaded) y errores de conexión/timeout.
+                    const isRetryable = status === 503 || status === 429 || status === 500 || error.code === 'ECONNABORTED' || error.message === 'EMPTY_TEXT_RESPONSE';
+
+                    if (attempt < MAX_RETRIES - 1 && isRetryable) {
+                        // Si es un error reintentable y no es el último intento:
+                        // Cálculo del tiempo de espera: Base * 2^intento + Jitter (aleatorio para evitar picos de reintento)
+                        const delayTime = INITIAL_DELAY_MS * (2 ** attempt) + Math.random() * 500; 
+                        console.warn(`[REINTENTO #${attempt + 1}] Error HTTP ${status || error.code || 'Desconocido'}. Reintentando en ${Math.round(delayTime)}ms.`);
+                        await delay(delayTime);
+                    } else {
+                        // Si no es reintentable o es el último intento, lanzar el error para el bloque 'catch' principal
+                        throw error;
+                    }
+                }
             }
+            // --- FIN: LÓGICA DE REINTENTO ---
+            
+            // Si el bucle terminó sin resultado (aunque la lógica interna lo previene, es un chequeo de seguridad)
+            if (!resultText) {
+                 throw new Error("MAX_RETRIES_EXCEEDED");
+            }
+
+            // Continuación de la lógica de procesamiento (anteriormente después de axios.post)
 
             let aiResponse;
             // Bloque anidado para manejar el error de JSON.parse, que es propenso a fallar.
@@ -143,7 +185,7 @@ class AsistenteIA {
                 stage: aiResponse.next_stage,
                 items: aiResponse.items_update || [],
                 nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
-                // INICIO DE LA CORRECCIÓN: Aseguramos que telefonoCliente use el 'caller' de Twilio como fallback
+                // INICIO DE LA CORRECCIÓN (Mantenida): Aseguramos que telefonoCliente use el 'caller' de Twilio como fallback
                 telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente || estadoActual.caller,
                 // FIN DE LA CORRECCIÓN
                 // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
@@ -168,8 +210,10 @@ class AsistenteIA {
             // Mejora el diagnóstico de errores específicos
             if (error.message === "JSON_PARSE_FAILED") {
                 logDetails = "Fallo de parseo de JSON (LLM devolvió texto no JSON).";
-            } else if (error.message === "API_RESPONSE_EMPTY") {
-                logDetails = "Respuesta de la API de Gemini vacía o incompleta.";
+            } else if (error.message === "MAX_RETRIES_EXCEEDED") {
+                logDetails = "Límite máximo de reintentos alcanzado.";
+            } else if (error.message === "EMPTY_TEXT_RESPONSE") {
+                 logDetails = "Respuesta de la API de Gemini vacía o sin texto.";
             } else if (error.response) {
                 // Error de Axios (red, 4xx, 5xx)
                 logDetails = `Fallo de la API (HTTP ${error.response.status}): ${JSON.stringify(error.response.data)}`;
