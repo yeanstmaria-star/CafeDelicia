@@ -1,246 +1,175 @@
 // Archivo: AsistenteIA.js
+// VERSIÓN DE PRODUCCIÓN
 // Clase responsable de la lógica de conversación y la integración con el LLM (Gemini).
-// La IA real controla la transición de estados y la extracción de ítems de la orden.
+// La IA controla el estado de la conversación y extrae los ítems de la orden.
+// Se conecta a la base de datos en tiempo real para obtener el menú y calcular precios.
 
-const axios = require('axios'); // Ya incluido en package.json
-// Eliminada la línea de require de firebase/firestore que causaba el error de dependencia.
+const axios = require('axios');
 
-// Configuración de la API (tomada de .env.example)
+// Configuración de la API (tomada de .env)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+const API_URL = `https://generativelabnguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
 
-// --- CONFIGURACIÓN DE REINTENTO Y BACKOFF EXPONENCIAL ---
+// Configuración de reintentos
 const MAX_RETRIES = 3;
-const INITIAL_DELAY_MS = 1000; // 1 segundo (mínimo)
-
-// Función de utilidad para retrasar la ejecución
+const INITIAL_DELAY_MS = 1000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-// ---------------------------------------------------------
 
+// Precios de personalizaciones (podrían estar en la base de datos en el futuro)
+const PRECIOS_EXTRAS = {
+    'leche de avena': 1.00,
+    'leche de almendra': 1.00,
+    'shot extra de espresso': 1.50,
+    'tamaño grande': 0.75
+};
 
 class AsistenteIA {
-    constructor() {
-        console.log(`AsistenteIA: Inicializado (Simulación de Asistente Barista - Conversación).`);
-        // NOTA: En un entorno real, la conexión a la base de datos se pasaría aquí 
-        // para que la IA tenga acceso al menú en tiempo real.
+    // El constructor ahora recibe la instancia de la base de datos
+    constructor(db) {
+        this.db = db; // Almacena la conexión a la base de datos
+        if (!this.db) {
+            throw new Error("AsistenteIA requiere una instancia de base de datos para funcionar.");
+        }
+        console.log(`AsistenteIA: Inicializado en MODO PRODUCCIÓN.`);
     }
 
-    // El esquema JSON que el LLM debe seguir para determinar el estado y los ítems.
+    // El esquema JSON que el LLM debe seguir
     get JSON_SCHEMA() {
         return {
             type: "OBJECT",
             properties: {
-                "next_stage": {
-                    "type": "STRING",
-                    "description": "El nuevo estado de la conversación. Debe ser uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED."
-                },
+                "next_stage": { "type": "STRING", "description": "El nuevo estado de la conversación. Debe ser uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED." },
                 "items_update": {
-                    "type": "ARRAY",
-                    "description": "Lista completa de todos los productos y personalizaciones que el cliente ha CONFIRMADO hasta ahora en toda la conversación.",
+                    "type": "ARRAY", "description": "Lista COMPLETA y ACTUALIZADA de productos confirmados por el cliente.",
                     "items": {
                         "type": "OBJECT",
                         "properties": {
-                            "nombre": { "type": "STRING", "description": "Nombre del producto (ej: Capuchino, Muffin de Arándano)." },
-                            "personalizaciones": { 
-                                "type": "ARRAY", 
-                                "items": { "type": "STRING" },
-                                "description": "Modificaciones (ej: leche de avena, shot extra)."
-                            },
-                            // NUEVO: Campo para que la IA sepa dónde enviar el ítem.
-                            "area_preparacion": { "type": "STRING", "description": "El área de preparación del menú (barra o cocina)." } 
+                            "nombre": { "type": "STRING" },
+                            "personalizaciones": { "type": "ARRAY", "items": { "type": "STRING" } },
+                            "area_preparacion": { "type": "STRING", "description": "El área de preparación del menú (barra o cocina)." }
                         },
-                        // Se agrega area_preparacion como campo obligatorio en el objeto de ítem.
-                        "required": ["nombre", "area_preparacion"] 
+                        "required": ["nombre", "area_preparacion"]
                     }
                 },
-                "nombre_cliente": {
-                    "type": "STRING",
-                    "description": "El nombre del cliente si fue mencionado. Usa 'Cliente Anónimo' si no se mencionó."
-                },
-                "telefono_cliente": {
-                    "type": "STRING",
-                    "description": "El número de teléfono del cliente si fue mencionado. Usa el CallSid como fallback si no se mencionó."
-                },
-                "llm_response_text": {
-                    "type": "STRING",
-                    "description": "El mensaje de respuesta AMABLE Y CONCISA del barista para el cliente, basado en el estado actual y la transcripción. NO DEBE EXCEDER LAS 15 PALABRAS."
-                }
+                "nombre_cliente": { "type": "STRING", "description": "El nombre del cliente si fue mencionado." },
+                "telefono_cliente": { "type": "STRING", "description": "El número de teléfono si fue mencionado." },
+                "llm_response_text": { "type": "STRING", "description": "Respuesta AMABLE y CONCISA del barista (máximo 15 palabras)." }
             },
             required: ["next_stage", "items_update", "llm_response_text"]
         };
     }
 
-    // Simulación de menú para el prompt del LLM (en un entorno real se obtendría de la DB)
-    getMenuContexto() {
-        return [
-            { nombre: "Capuchino", precio: 4.50, area_preparacion: 'barra' },
-            { nombre: "Latte Vainilla", precio: 5.00, area_preparacion: 'barra' },
-            { nombre: "Té Chai", precio: 4.00, area_preparacion: 'barra' },
-            { nombre: "Muffin de Arándanos", precio: 3.50, area_preparacion: 'cocina' },
-            { nombre: "Croissant", precio: 2.50, area_preparacion: 'cocina' }
-        ];
+    // Función para calcular el total basado en los ítems y el menú de la BD
+    _calculateTotal(items, menu) {
+        let total = 0;
+        const menuMap = new Map(menu.map(item => [item.nombre, parseFloat(item.precio)]));
+
+        items.forEach(item => {
+            // Suma el precio base del producto
+            total += menuMap.get(item.nombre) || 0;
+            // Suma el precio de las personalizaciones
+            (item.personalizaciones || []).forEach(custom => {
+                const customKey = custom.toLowerCase();
+                total += PRECIOS_EXTRAS[customKey] || 0;
+            });
+        });
+        return parseFloat(total.toFixed(2));
     }
 
     async procesarConversacion(transcripcion, estadoActual) {
-        console.log(`IA procesando transcripción recibida: "${transcripcion}" en etapa: ${estadoActual.stage}`);
+        console.log(`IA procesando transcripción: "${transcripcion}" | Etapa: ${estadoActual.stage}`);
 
-        // --- INICIO: VERIFICACIÓN CRÍTICA DE CLAVE ---
-        if (!GEMINI_API_KEY || GEMINI_API_KEY === '') {
-            const fallbackMessage = "Lo siento, parece que la clave de la IA no está configurada. Por favor, revise la variable GEMINI_API_KEY en su entorno de Render.";
-            console.error(`[ERROR CRÍTICO] La clave de API de Gemini está vacía. No se puede continuar.`);
-            return {
-                mensaje: fallbackMessage,
-                estadoActualizado: estadoActual
-            };
+        if (!GEMINI_API_KEY) {
+            console.error("[ERROR CRÍTICO] La clave de API de Gemini no está configurada.");
+            return { mensaje: "Error de configuración del sistema.", estadoActualizado: estadoActual };
         }
-        // --- FIN: VERIFICACIÓN CRÍTICA DE CLAVE ---
 
-        // Construir el prompt para el LLM
-        const menu = this.getMenuContexto();
-        const prompt = `INSTRUCCIÓN RÁPIDA: Eres un barista. Analiza la transcripción, actualiza la orden, determina el nuevo estado y genera una respuesta CONCISA.
-
-        MENÚ: ${JSON.stringify(menu)}
-        ESTADO ACTUAL: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
-        CLIENTE DICE: "${transcripcion}"
-        
-        Sigue los estados: INITIAL_ORDER -> CUSTOMIZATION -> UPSELL_FINAL -> CONFIRMATION -> IDENTIFICATION -> FINALIZED.
-        Genera el JSON completo. La respuesta de texto debe ser natural pero *máximo 15 palabras*.
+        // Obtiene el menú de la base de datos en tiempo real para cada llamada
+        const menu = await this.db.obtenerMenu();
+        const prompt = `
+            INSTRUCCIÓN: Eres un barista de IA. Analiza la transcripción, actualiza la orden, determina el siguiente estado y genera una respuesta CONCISA.
+            MENÚ DISPONIBLE: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
+            ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
+            TRANSCRIPCIÓN DEL CLIENTE: "${transcripcion}"
+            REGLA: Tu respuesta de texto debe ser natural y de máximo 15 palabras. Devuelve el JSON completo.
         `;
-        
-        // Configuración para la respuesta JSON estructurada
+
         const payload = {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
                 responseMimeType: "application/json",
                 responseSchema: this.JSON_SCHEMA
             },
-            // Instrucción de sistema más corta y orientada a la velocidad
             systemInstruction: {
-                parts: [{ text: "Eres un Barista IA. Analiza RÁPIDAMENTE la transcripción y devuelve SOLO el objeto JSON estructurado. Prioriza la velocidad y concisión en la respuesta de texto." }]
+                parts: [{ text: "Eres un Barista IA. Analiza RÁPIDAMENTE la transcripción y devuelve SOLO el objeto JSON. Prioriza la velocidad y la concisión." }]
             }
         };
 
         let resultText = null;
-
         try {
-            // --- INICIO: LÓGICA DE REINTENTO CON BACKOFF EXPONENCIAL (Corrección para 503) ---
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    // 1. Intento de llamada a la API
-                    const response = await axios.post(API_URL, payload, {
-                        headers: { 'Content-Type': 'application/json' },
-                        // Añadimos un timeout razonable para fallar rápido si la API no responde
-                        timeout: 15000 
-                    });
-                    
-                    // Si es exitoso, almacenamos el texto y salimos del bucle.
+                    const response = await axios.post(API_URL, payload, { timeout: 15000 });
                     resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (resultText) {
-                        break; // Éxito, salir del bucle de reintento
-                    } else {
-                        // Si no hay texto, forzamos un reintento si no es el último intento
-                        throw new Error("EMPTY_TEXT_RESPONSE");
-                    }
-
+                    if (resultText) break;
+                    throw new Error("EMPTY_TEXT_RESPONSE");
                 } catch (error) {
                     const status = error.response?.status;
-                    // Errores reintentables: 429 (Rate Limit), 500 (Server Error), 503 (Overloaded) y errores de conexión/timeout.
-                    const isRetryable = status === 503 || status === 429 || status === 500 || error.code === 'ECONNABORTED' || error.message === 'EMPTY_TEXT_RESPONSE';
-
+                    const isRetryable = [503, 429, 500].includes(status) || error.code === 'ECONNABORTED';
                     if (attempt < MAX_RETRIES - 1 && isRetryable) {
-                        // Si es un error reintentable y no es el último intento:
-                        // Cálculo del tiempo de espera: Base * 2^intento + Jitter (aleatorio para evitar picos de reintento)
-                        const delayTime = INITIAL_DELAY_MS * (2 ** attempt) + Math.random() * 500; 
-                        console.warn(`[REINTENTO #${attempt + 1}] Error HTTP ${status || error.code || 'Desconocido'}. Reintentando en ${Math.round(delayTime)}ms.`);
+                        const delayTime = INITIAL_DELAY_MS * (2 ** attempt) + Math.random() * 500;
+                        console.warn(`[REINTENTO #${attempt + 1}] Error ${status || 'de red'}. Reintentando en ${Math.round(delayTime)}ms.`);
                         await delay(delayTime);
                     } else {
-                        // Si no es reintentable o es el último intento, lanzar el error para el bloque 'catch' principal
                         throw error;
                     }
                 }
             }
-            // --- FIN: LÓGICA DE REINTENTO ---
+            if (!resultText) throw new Error("MAX_RETRIES_EXCEEDED");
+
+            const aiResponse = JSON.parse(resultText);
+            const itemsActualizados = aiResponse.items_update || [];
             
-            // Si el bucle terminó sin resultado (aunque la lógica interna lo previene, es un chequeo de seguridad)
-            if (!resultText) {
-                 throw new Error("MAX_RETRIES_EXCEEDED");
-            }
+            // Calcula el total con la nueva lógica de precios
+            const totalCalculado = this._calculateTotal(itemsActualizados, menu);
 
-            // Continuación de la lógica de procesamiento (anteriormente después de axios.post)
-
-            let aiResponse;
-            // Bloque anidado para manejar el error de JSON.parse, que es propenso a fallar.
-            try {
-                aiResponse = JSON.parse(resultText);
-            } catch (parseError) {
-                // Si el parsing falla, registra el texto que causó el problema
-                console.error(`[ERROR GEMINI] Fallo al parsear JSON. Texto recibido: ${resultText.substring(0, 200)}...`);
-                throw new Error("JSON_PARSE_FAILED");
-            }
-
-
-            // Actualizar el estado de la aplicación con la respuesta de la IA
             const nuevoEstado = {
                 ...estadoActual,
                 stage: aiResponse.next_stage,
-                items: aiResponse.items_update || [],
+                items: itemsActualizados,
+                total: totalCalculado, // Total actualizado
                 nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
-                // INICIO DE LA CORRECCIÓN (Mantenida): Aseguramos que telefonoCliente use el 'caller' de Twilio como fallback
-                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente || estadoActual.caller,
-                // FIN DE LA CORRECCIÓN
-                // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
+                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonoCliente || estadoActual.caller,
             };
             
-            // --- LOGS DE DIAGNÓSTICO FINALES (NUEVO) ---
-            console.log(`[DIAGNÓSTICO] Respuesta exitosa de la IA. Nuevo estado: ${nuevoEstado.stage}`);
-            // Este log muestra el objeto de retorno completo para verificar el payload en server.js
-            console.log(`[DIAGNÓSTICO] PAYLOAD RETORNADO AL SERVIDOR: ${JSON.stringify({ mensaje: aiResponse.llm_response_text, estadoActualizado: nuevoEstado })}`);
-            // ------------------------------------------
-
+            // Si la IA confirma la orden, inyecta el total en el mensaje de respuesta.
+            let mensajeFinal = aiResponse.llm_response_text;
+            if (nuevoEstado.stage === 'CONFIRMATION' || nuevoEstado.stage === 'FINALIZED') {
+                if (!mensajeFinal.toLowerCase().includes('total')) {
+                    mensajeFinal += ` El total es de $${totalCalculado.toFixed(2)}.`;
+                }
+            }
+            
+            console.log(`[DIAGNÓSTICO] Respuesta de IA exitosa. Nuevo estado: ${nuevoEstado.stage}`);
             return {
-                mensaje: aiResponse.llm_response_text,
+                mensaje: mensajeFinal,
                 estadoActualizado: nuevoEstado
             };
 
         } catch (error) {
-            // Este bloque atrapa fallos de Axios (timeouts/red) y errores de JSON/texto fallidos
+            let logDetails = "Error desconocido";
+            if (error.message.includes("JSON.parse")) logDetails = "Fallo de parseo de JSON.";
+            else if (error.response) logDetails = `Fallo de API (HTTP ${error.response.status}).`;
+            else logDetails = `Error de red o reintentos fallidos.`;
             
-            let logDetails = error.message;
-
-            // Mejora el diagnóstico de errores específicos
-            if (error.message === "JSON_PARSE_FAILED") {
-                logDetails = "Fallo de parseo de JSON (LLM devolvió texto no JSON).";
-            } else if (error.message === "MAX_RETRIES_EXCEEDED") {
-                logDetails = "Límite máximo de reintentos alcanzado.";
-            } else if (error.message === "EMPTY_TEXT_RESPONSE") {
-                 logDetails = "Respuesta de la API de Gemini vacía o sin texto.";
-            } else if (error.response) {
-                // Error de Axios (red, 4xx, 5xx)
-                logDetails = `Fallo de la API (HTTP ${error.response.status}): ${JSON.stringify(error.response.data)}`;
-            } else {
-                // Otros errores (timeout, conexión)
-                logDetails = `Error de conexión o timeout: ${error.message}`;
-            }
-
-            console.error(`[FALLBACK DE CONVERSACIÓN] Se activa el manejo de errores: ${logDetails}`);
-
-            // Fallback en caso de error de la IA
-            // Devolver un objeto válido asegura que el servidor Express siempre pueda responder con TwiML
-            // --- MODIFICACIÓN CLAVE: INCLUIR LA TRANSCRIPCIÓN EN EL ESTADO EN CASO DE FALLO ---
-            const estadoConError = {
-                ...estadoActual,
-                // Agregamos la transcripción del turno fallido para que el server.js pueda re-introducirla
-                // en el próximo prompt (ej. en el siguiente turno del usuario).
-                transcripcionPendiente: transcripcion
-            };
-            // --------------------------------------------------------------------------------
-
+            console.error(`[FALLBACK] Se activa el manejo de errores: ${logDetails}`);
             return {
-                mensaje: "Lo siento, hubo un problema técnico. ¿Podrías repetir la última parte de tu pedido, por favor?",
-                estadoActualizado: estadoConError
+                mensaje: "Lo siento, hubo un problema técnico. ¿Podrías repetir, por favor?",
+                estadoActualizado: { ...estadoActual, transcripcionPendiente: transcripcion }
             };
         }
     }
 }
 
 module.exports = AsistenteIA;
+
