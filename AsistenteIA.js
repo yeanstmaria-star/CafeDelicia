@@ -1,17 +1,19 @@
 // Archivo: AsistenteIA.js
-// VERSIÓN DE PRODUCCIÓN - DIAGNÓSTICO DE ERROR 404 MEJORADO
-// Se añadió un log específico para guiar en la solución de errores 404.
+// VERSIÓN DE PRODUCCIÓN - Impulsado por Anthropic Claude 3 Haiku
+// Utiliza la API de Anthropic para una conversación más natural y robusta.
 
 const axios = require('axios');
 
-// Configuración de la API (tomada de .env)
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+// Configuración de la API de Anthropic (tomada de .env)
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const API_URL = 'https://api.anthropic.com/v1/messages';
 
+// Configuración de reintentos
 const MAX_RETRIES = 2;
 const INITIAL_DELAY_MS = 1000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// Precios de personalizaciones
 const PRECIOS_EXTRAS = {
     'leche de avena': 1.00,
     'leche de almendra': 1.00,
@@ -25,31 +27,36 @@ class AsistenteIA {
         if (!this.db) {
             throw new Error("AsistenteIA requiere una instancia de base de datos para funcionar.");
         }
-        console.log(`AsistenteIA: Inicializado en MODO PRODUCCIÓN.`);
+        console.log(`AsistenteIA: Inicializado en MODO PRODUCCIÓN con Anthropic Claude.`);
     }
 
-    get JSON_SCHEMA() {
+    // El esquema JSON que Claude debe seguir (definido como una "herramienta")
+    get JSON_TOOL_SCHEMA() {
         return {
-            type: "OBJECT",
-            properties: {
-                "next_stage": { "type": "STRING", "description": "El nuevo estado de la conversación. Uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED." },
-                "items_update": {
-                    "type": "ARRAY", "description": "Lista COMPLETA y ACTUALIZADA de productos confirmados.",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "nombre": { "type": "STRING" },
-                            "personalizaciones": { "type": "ARRAY", "items": { "type": "STRING" } },
-                            "area_preparacion": { "type": "STRING", "description": "El área de preparación del menú (barra o cocina)." }
-                        },
-                        "required": ["nombre", "area_preparacion"]
-                    }
+            name: "actualizar_estado_orden",
+            description: "Actualiza el estado de la orden del cliente basado en la conversación.",
+            input_schema: {
+                type: "object",
+                properties: {
+                    "next_stage": { type: "string", description: "El nuevo estado de la conversación. Uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED." },
+                    "items_update": {
+                        type: "array", description: "Lista COMPLETA y ACTUALIZADA de productos confirmados por el cliente.",
+                        items: {
+                            type: "object",
+                            properties: {
+                                "nombre": { type: "string" },
+                                "personalizaciones": { type: "array", "items": { type: "string" } },
+                                "area_preparacion": { type: "string", description: "El área de preparación del menú (barra o cocina)." }
+                            },
+                            required: ["nombre", "area_preparacion"]
+                        }
+                    },
+                    "nombre_cliente": { type: "string" },
+                    "telefono_cliente": { type: "string" },
+                    "llm_response_text": { type: "string", description: "Respuesta AMABLE y CONCISA del barista (máximo 15 palabras)." }
                 },
-                "nombre_cliente": { "type": "STRING" },
-                "telefono_cliente": { "type": "STRING" },
-                "llm_response_text": { "type": "STRING", "description": "Respuesta AMABLE y CONCISA (máximo 15 palabras)." }
-            },
-            required: ["next_stage", "items_update", "llm_response_text"]
+                required: ["next_stage", "items_update", "llm_response_text"]
+            }
         };
     }
 
@@ -66,54 +73,80 @@ class AsistenteIA {
     }
 
     async procesarConversacion(transcripcion, estadoActual) {
-        console.log(`IA procesando transcripción: "${transcripcion}" | Etapa: ${estadoActual.stage}`);
+        console.log(`IA (Claude) procesando: "${transcripcion}" | Etapa: ${estadoActual.stage}`);
 
-        if (!GEMINI_API_KEY) {
-            console.error("[ERROR CRÍTICO] La clave de API de Gemini no está configurada.");
+        if (!ANTHROPIC_API_KEY) {
+            console.error("[ERROR CRÍTICO] La clave de API de Anthropic no está configurada.");
             return { mensaje: "Error de configuración del sistema.", estadoActualizado: estadoActual };
         }
 
         const menu = await this.db.obtenerMenu();
-        const prompt = `
-            INSTRUCCIÓN: Eres un barista de IA. Analiza la transcripción, actualiza la orden, determina el siguiente estado y genera una respuesta CONCISA.
-            MENÚ: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
-            ESTADO ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
-            CLIENTE DICE: "${transcripcion}"
-            REGLA: Tu respuesta de texto debe ser natural y de máximo 15 palabras. Devuelve el JSON completo.
+        const system_prompt = `
+            Eres un barista de IA para "Cafe Delicia". Tu tarea es atender un pedido por teléfono.
+            Sé amable, rápido y conciso. Sigue el flujo de la conversación y actualiza el estado de la orden.
+            Tu respuesta de texto NO DEBE EXCEDER 15 PALABRAS.
+            Analiza la transcripción del cliente, considera el estado actual de la orden y usa la herramienta 'actualizar_estado_orden' para devolver el nuevo estado y tu respuesta.
+        `;
+        const user_prompt = `
+            MENÚ DISPONIBLE: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
+            ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
+            TRANSCRIPCIÓN DEL CLIENTE: "${transcripcion}"
         `;
 
         const payload = {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: this.JSON_SCHEMA
-            },
-            systemInstruction: {
-                parts: [{ text: "Eres un Barista IA. Analiza RÁPIDAMENTE la transcripción y devuelve SOLO el objeto JSON. Prioriza la velocidad y la concisión." }]
+            model: "claude-3-haiku-20240307", // Modelo rápido y económico
+            system: system_prompt,
+            messages: [{ role: "user", content: user_prompt }],
+            max_tokens: 1024,
+            tools: [this.JSON_TOOL_SCHEMA],
+            tool_choice: {
+                type: "tool",
+                name: "actualizar_estado_orden"
             }
         };
 
-        let resultText = null;
         try {
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const response = await axios.post(API_URL, payload, { timeout: 6000 });
-                    resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (resultText) break;
-                    throw new Error("EMPTY_TEXT_RESPONSE");
+                    const response = await axios.post(API_URL, payload, {
+                        headers: {
+                            'x-api-key': ANTHROPIC_API_KEY,
+                            'anthropic-version': '2023-06-01',
+                            'content-type': 'application/json'
+                        },
+                        timeout: 6000
+                    });
+
+                    const toolCall = response.data?.content?.find(block => block.type === 'tool_use');
+                    if (toolCall && toolCall.input) {
+                        const aiResponse = toolCall.input;
+                        const itemsActualizados = aiResponse.items_update || [];
+                        const totalCalculado = this._calculateTotal(itemsActualizados, menu);
+
+                        const nuevoEstado = {
+                            ...estadoActual,
+                            stage: aiResponse.next_stage,
+                            items: itemsActualizados,
+                            total: totalCalculado,
+                            nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
+                            telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonoCliente || estadoActual.caller,
+                        };
+
+                        let mensajeFinal = aiResponse.llm_response_text;
+                        if ((nuevoEstado.stage === 'CONFIRMATION' || nuevoEstado.stage === 'FINALIZED') && !mensajeFinal.toLowerCase().includes('total')) {
+                            mensajeFinal += ` El total es de $${totalCalculado.toFixed(2)}.`;
+                        }
+
+                        console.log(`[DIAGNÓSTICO] Respuesta de Claude exitosa. Nuevo estado: ${nuevoEstado.stage}`);
+                        return { mensaje: mensajeFinal, estadoActualizado: nuevoEstado };
+                    }
+                    throw new Error("NO_TOOL_CALL_IN_RESPONSE");
+
                 } catch (error) {
                     const status = error.response?.status;
-                    // --- MANEJO DE ERROR 404 MEJORADO ---
-                    if (status === 404) {
-                        console.error("[ERROR DE CONFIGURACIÓN 404] La API de Gemini devolvió 'No Encontrado'.");
-                        console.error("--> ACCIÓN REQUERIDA: Revisa lo siguiente:");
-                        console.error("    1. La variable de entorno 'GEMINI_API_KEY' en Render está copiada correctamente.");
-                        console.error("    2. En tu consola de Google Cloud, asegúrate de que la 'Generative Language API' (o 'Vertex AI API') esté HABILITADA para tu proyecto.");
-                    }
-                    // ------------------------------------
-                    const isRetryable = [503, 429, 500].includes(status) || error.code === 'ECONNABORTED';
+                    const isRetryable = [503, 429, 500, 529].includes(status) || error.code === 'ECONNABORTED';
                     if (attempt < MAX_RETRIES - 1 && isRetryable) {
-                        const delayTime = INITIAL_DELAY_MS * (2 ** attempt) + Math.random() * 500;
+                        const delayTime = INITIAL_DELAY_MS * (2 ** attempt);
                         console.warn(`[REINTENTO #${attempt + 1}] Error ${status || 'de red'}. Reintentando en ${Math.round(delayTime)}ms.`);
                         await delay(delayTime);
                     } else {
@@ -121,39 +154,16 @@ class AsistenteIA {
                     }
                 }
             }
-            if (!resultText) throw new Error("MAX_RETRIES_EXCEEDED");
-
-            const aiResponse = JSON.parse(resultText);
-            const itemsActualizados = aiResponse.items_update || [];
-            const totalCalculado = this._calculateTotal(itemsActualizados, menu);
-
-            const nuevoEstado = {
-                ...estadoActual,
-                stage: aiResponse.next_stage,
-                items: itemsActualizados,
-                total: totalCalculado,
-                nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
-                telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonoCliente || estadoActual.caller,
-            };
-            
-            let mensajeFinal = aiResponse.llm_response_text;
-            if (nuevoEstado.stage === 'CONFIRMATION' || nuevoEstado.stage === 'FINALIZED') {
-                if (!mensajeFinal.toLowerCase().includes('total')) {
-                    mensajeFinal += ` El total es de $${totalCalculado.toFixed(2)}.`;
-                }
-            }
-            
-            console.log(`[DIAGNÓSTICO] Respuesta de IA exitosa. Nuevo estado: ${nuevoEstado.stage}`);
-            return {
-                mensaje: mensajeFinal,
-                estadoActualizado: nuevoEstado
-            };
+            throw new Error("MAX_RETRIES_EXCEEDED");
 
         } catch (error) {
-            let logDetails = "Error desconocido";
-            if (error.message.includes("JSON.parse")) logDetails = "Fallo de parseo de JSON.";
-            else if (error.response) logDetails = `Fallo de API (HTTP ${error.response.status}).`;
-            else logDetails = `Error de red o reintentos fallidos.`;
+            let logDetails;
+            if (error.response) {
+                logDetails = `Fallo de API (HTTP ${error.response.status}).`;
+                console.error("Detalles del error de Anthropic:", error.response.data);
+            } else {
+                logDetails = `Error de red o reintentos fallidos.`;
+            }
             
             console.error(`[FALLBACK] Se activa el manejo de errores: ${logDetails}`);
             return {
