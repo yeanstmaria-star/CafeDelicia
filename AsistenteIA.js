@@ -1,21 +1,21 @@
 // Archivo: AsistenteIA.js
-// VERSIÓN DE PRODUCCIÓN
-// Clase responsable de la lógica de conversación y la integración con el LLM (Gemini).
-// La IA controla el estado de la conversación y extrae los ítems de la orden.
-// Se conecta a la base de datos en tiempo real para obtener el menú y calcular precios.
+// VERSIÓN DE PRODUCCIÓN - URL DE API CORREGIDA
+// Se corrigió el error de tipeo en la constante API_URL.
 
 const axios = require('axios');
 
 // Configuración de la API (tomada de .env)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const API_URL = `https://generativelabnguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+// --- CORRECCIÓN CRÍTICA ---
+// Se corrigió "generativelabnguage" a "generativelanguage"
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+// -------------------------
 
 // Configuración de reintentos
 const MAX_RETRIES = 3;
 const INITIAL_DELAY_MS = 1000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Precios de personalizaciones (podrían estar en la base de datos en el futuro)
 const PRECIOS_EXTRAS = {
     'leche de avena': 1.00,
     'leche de almendra': 1.00,
@@ -24,23 +24,21 @@ const PRECIOS_EXTRAS = {
 };
 
 class AsistenteIA {
-    // El constructor ahora recibe la instancia de la base de datos
     constructor(db) {
-        this.db = db; // Almacena la conexión a la base de datos
+        this.db = db;
         if (!this.db) {
             throw new Error("AsistenteIA requiere una instancia de base de datos para funcionar.");
         }
         console.log(`AsistenteIA: Inicializado en MODO PRODUCCIÓN.`);
     }
 
-    // El esquema JSON que el LLM debe seguir
     get JSON_SCHEMA() {
         return {
             type: "OBJECT",
             properties: {
-                "next_stage": { "type": "STRING", "description": "El nuevo estado de la conversación. Debe ser uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED." },
+                "next_stage": { "type": "STRING", "description": "El nuevo estado de la conversación. Uno de: INITIAL_ORDER, CUSTOMIZATION, UPSELL_FINAL, CONFIRMATION, IDENTIFICATION, FINALIZED." },
                 "items_update": {
-                    "type": "ARRAY", "description": "Lista COMPLETA y ACTUALIZADA de productos confirmados por el cliente.",
+                    "type": "ARRAY", "description": "Lista COMPLETA y ACTUALIZADA de productos confirmados.",
                     "items": {
                         "type": "OBJECT",
                         "properties": {
@@ -51,26 +49,21 @@ class AsistenteIA {
                         "required": ["nombre", "area_preparacion"]
                     }
                 },
-                "nombre_cliente": { "type": "STRING", "description": "El nombre del cliente si fue mencionado." },
-                "telefono_cliente": { "type": "STRING", "description": "El número de teléfono si fue mencionado." },
-                "llm_response_text": { "type": "STRING", "description": "Respuesta AMABLE y CONCISA del barista (máximo 15 palabras)." }
+                "nombre_cliente": { "type": "STRING" },
+                "telefono_cliente": { "type": "STRING" },
+                "llm_response_text": { "type": "STRING", "description": "Respuesta AMABLE y CONCISA (máximo 15 palabras)." }
             },
             required: ["next_stage", "items_update", "llm_response_text"]
         };
     }
 
-    // Función para calcular el total basado en los ítems y el menú de la BD
     _calculateTotal(items, menu) {
         let total = 0;
         const menuMap = new Map(menu.map(item => [item.nombre, parseFloat(item.precio)]));
-
         items.forEach(item => {
-            // Suma el precio base del producto
             total += menuMap.get(item.nombre) || 0;
-            // Suma el precio de las personalizaciones
             (item.personalizaciones || []).forEach(custom => {
-                const customKey = custom.toLowerCase();
-                total += PRECIOS_EXTRAS[customKey] || 0;
+                total += PRECIOS_EXTRAS[custom.toLowerCase()] || 0;
             });
         });
         return parseFloat(total.toFixed(2));
@@ -84,13 +77,12 @@ class AsistenteIA {
             return { mensaje: "Error de configuración del sistema.", estadoActualizado: estadoActual };
         }
 
-        // Obtiene el menú de la base de datos en tiempo real para cada llamada
         const menu = await this.db.obtenerMenu();
         const prompt = `
             INSTRUCCIÓN: Eres un barista de IA. Analiza la transcripción, actualiza la orden, determina el siguiente estado y genera una respuesta CONCISA.
-            MENÚ DISPONIBLE: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
-            ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
-            TRANSCRIPCIÓN DEL CLIENTE: "${transcripcion}"
+            MENÚ: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
+            ESTADO ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
+            CLIENTE DICE: "${transcripcion}"
             REGLA: Tu respuesta de texto debe ser natural y de máximo 15 palabras. Devuelve el JSON completo.
         `;
 
@@ -129,20 +121,17 @@ class AsistenteIA {
 
             const aiResponse = JSON.parse(resultText);
             const itemsActualizados = aiResponse.items_update || [];
-            
-            // Calcula el total con la nueva lógica de precios
             const totalCalculado = this._calculateTotal(itemsActualizados, menu);
 
             const nuevoEstado = {
                 ...estadoActual,
                 stage: aiResponse.next_stage,
                 items: itemsActualizados,
-                total: totalCalculado, // Total actualizado
+                total: totalCalculado,
                 nombreCliente: aiResponse.nombre_cliente || estadoActual.nombreCliente,
                 telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonoCliente || estadoActual.caller,
             };
             
-            // Si la IA confirma la orden, inyecta el total en el mensaje de respuesta.
             let mensajeFinal = aiResponse.llm_response_text;
             if (nuevoEstado.stage === 'CONFIRMATION' || nuevoEstado.stage === 'FINALIZED') {
                 if (!mensajeFinal.toLowerCase().includes('total')) {
