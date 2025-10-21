@@ -146,6 +146,10 @@ class AsistenteIA {
                 telefonoCliente: aiResponse.telefono_cliente || estadoActual.telefonocliente,
                 // NOTA: La IA debe recalcular el total en el prompt (omitido aquí por simplicidad)
             };
+            
+            // --- NUEVO LOG DE DIAGNÓSTICO ---
+            console.log(`[DIAGNÓSTICO] Respuesta exitosa de la IA. Nuevo estado: ${nuevoEstado.stage}`);
+            // ---------------------------------
 
             return {
                 mensaje: aiResponse.llm_response_text,
