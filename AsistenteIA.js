@@ -226,9 +226,18 @@ class AsistenteIA {
 
             // Fallback en caso de error de la IA
             // Devolver un objeto válido asegura que el servidor Express siempre pueda responder con TwiML
+            // --- MODIFICACIÓN CLAVE: INCLUIR LA TRANSCRIPCIÓN EN EL ESTADO EN CASO DE FALLO ---
+            const estadoConError = {
+                ...estadoActual,
+                // Agregamos la transcripción del turno fallido para que el server.js pueda re-introducirla
+                // en el próximo prompt (ej. en el siguiente turno del usuario).
+                transcripcionPendiente: transcripcion
+            };
+            // --------------------------------------------------------------------------------
+
             return {
                 mensaje: "Lo siento, hubo un problema técnico. ¿Podrías repetir la última parte de tu pedido, por favor?",
-                estadoActualizado: estadoActual
+                estadoActualizado: estadoConError
             };
         }
     }
