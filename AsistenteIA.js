@@ -86,10 +86,11 @@ class AsistenteIA {
             Sé amable, rápido y conciso. Sigue el flujo de la conversación y actualiza el estado de la orden.
             Tu respuesta de texto NO DEBE EXCEDER 15 PALABRAS.
             Analiza la transcripción del cliente, considera el estado actual de la orden y usa la herramienta 'actualizar_estado_orden' para devolver el nuevo estado y tu respuesta.
+            REGLA IMPORTANTE: Si el cliente confirma la orden pero el nombre del cliente es 'Cliente Anónimo', tu 'next_stage' DEBE ser 'IDENTIFICATION' para pedir el nombre. NO pases a 'FINALIZED' sin un nombre.
         `;
         const user_prompt = `
             MENÚ DISPONIBLE: ${JSON.stringify(menu.map(p => ({ nombre: p.nombre, area: p.area_preparacion })))}
-            ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage })}
+            ESTADO ACTUAL DE LA ORDEN: ${JSON.stringify({ items: estadoActual.items, stage: estadoActual.stage, nombreCliente: estadoActual.nombreCliente })}
             TRANSCRIPCIÓN DEL CLIENTE: "${transcripcion}"
         `;
 
