@@ -1,15 +1,12 @@
 // Archivo: AsistenteIA.js
-// VERSIÓN DE PRODUCCIÓN - OPTIMIZADA CON MODELO ESTABLE
-// Se cambió a un modelo de Gemini más estable para evitar errores 503.
+// VERSIÓN DE PRODUCCIÓN - DIAGNÓSTICO DE ERROR 404 MEJORADO
+// Se añadió un log específico para guiar en la solución de errores 404.
 
 const axios = require('axios');
 
 // Configuración de la API (tomada de .env)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// --- OPTIMIZACIÓN DE ESTABILIDAD ---
-// Se cambió el modelo a 'gemini-1.5-flash-latest' para mayor robustez.
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
-// ---------------------------------
 
 const MAX_RETRIES = 2;
 const INITIAL_DELAY_MS = 1000;
@@ -106,6 +103,14 @@ class AsistenteIA {
                     throw new Error("EMPTY_TEXT_RESPONSE");
                 } catch (error) {
                     const status = error.response?.status;
+                    // --- MANEJO DE ERROR 404 MEJORADO ---
+                    if (status === 404) {
+                        console.error("[ERROR DE CONFIGURACIÓN 404] La API de Gemini devolvió 'No Encontrado'.");
+                        console.error("--> ACCIÓN REQUERIDA: Revisa lo siguiente:");
+                        console.error("    1. La variable de entorno 'GEMINI_API_KEY' en Render está copiada correctamente.");
+                        console.error("    2. En tu consola de Google Cloud, asegúrate de que la 'Generative Language API' (o 'Vertex AI API') esté HABILITADA para tu proyecto.");
+                    }
+                    // ------------------------------------
                     const isRetryable = [503, 429, 500].includes(status) || error.code === 'ECONNABORTED';
                     if (attempt < MAX_RETRIES - 1 && isRetryable) {
                         const delayTime = INITIAL_DELAY_MS * (2 ** attempt) + Math.random() * 500;
